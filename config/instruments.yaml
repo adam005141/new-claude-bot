@@ -1,0 +1,131 @@
+# Instrument specifications
+# ---------------------------------------------------------------------------
+# VERSION: 1.0.0
+# CREATED: 2026-07-31
+#
+# SOURCE QUALITY WARNING: cmegroup.com returned HTTP 403 to direct fetch from this
+# environment. All values below come from search-engine summaries citing CME Group
+# and broker knowledge bases, NOT from loading CME's contract-spec pages. Every
+# value must be re-verified by a human against cmegroup.com before capital is
+# committed. Evidence level: moderate.
+# ---------------------------------------------------------------------------
+
+meta:
+  config_version: 1.0.0
+  verified_on: 2026-07-31
+  requires_human_reverification: true
+
+# ---------------------------------------------------------------------------
+# EXECUTION INSTRUMENTS. Orders, fills, stops, targets, costs, and P&L are
+# modeled on these and only these.
+# ---------------------------------------------------------------------------
+execution_instruments:
+
+  MES:
+    name: Micro E-mini S&P 500
+    exchange: CME
+    ibkr_underlying_contract_id: 362673777
+    classification: FIXED-MARKET
+    multiplier_usd_per_index_point: 5.00
+    min_tick_index_points: 0.25
+    tick_value_usd: 1.25
+    point_value_usd: 5.00
+    settlement: cash
+    contract_months: [H, M, U, Z]        # Mar, Jun, Sep, Dec
+    expiry_rule: third_Friday_of_contract_month
+    source: https://www.cmegroup.com/markets/equities/sp/micro-e-mini-sandp-500.contractSpecs.html
+    corroborating_source: https://www.ironbeam.com/knowledge-base/micro-e-mini-sp-500-futures-mes-contract-specifications/
+    accessed: 2026-07-31
+    evidence_level: moderate
+
+  MNQ:
+    name: Micro E-mini Nasdaq-100
+    exchange: CME
+    ibkr_underlying_contract_id: 362687422
+    classification: FIXED-MARKET
+    multiplier_usd_per_index_point: 2.00
+    min_tick_index_points: 0.25
+    tick_value_usd: 0.50
+    point_value_usd: 2.00
+    settlement: cash
+    contract_months: [H, M, U, Z]
+    expiry_rule: third_Friday_of_contract_month
+    source: https://www.ironbeam.com/knowledge-base/micro-e-mini-nasdaq-100-futures-mnq-contract-specifications/
+    corroborating_source: https://help.metrotrade.com/kb/micro-e-mini-nasdaq-100-futures-mnq-contract-specifications
+    accessed: 2026-07-31
+    evidence_level: moderate
+
+# ---------------------------------------------------------------------------
+# REFERENCE-ONLY INSTRUMENTS. May supply features. MUST NOT generate orders.
+# The order router rejects any intent naming these symbols. See SPECIFICATION.md
+# section 13.
+# ---------------------------------------------------------------------------
+reference_instruments:
+
+  ES:
+    name: E-mini S&P 500
+    exchange: CME
+    classification: FIXED-MARKET
+    multiplier_usd_per_index_point: 50.00
+    min_tick_index_points: 0.25
+    tick_value_usd: 12.50
+    orderable: false
+    max_micro_contracts: 0
+    evidence_level: moderate
+    note: >
+      Values not independently search-verified in this session; asserted by analogy to
+      the 10:1 micro ratio and requiring verification. Reference use only, so an error
+      here cannot produce a wrong order size, only a wrong feature.
+
+  NQ:
+    name: E-mini Nasdaq-100
+    exchange: CME
+    classification: FIXED-MARKET
+    multiplier_usd_per_index_point: 20.00
+    min_tick_index_points: 0.25
+    tick_value_usd: 5.00
+    orderable: false
+    max_micro_contracts: 0
+    evidence_level: moderate
+    note: Same caveat as ES.
+
+# ---------------------------------------------------------------------------
+# Trading hours. All boundaries are named parameters. Never implement Eastern
+# Time as a fixed UTC offset; use a DST-aware library (zoneinfo).
+# ---------------------------------------------------------------------------
+trading_hours:
+  classification: FIXED-MARKET
+  globex_open: {time: "17:00", tz: America/Chicago, day: Sunday}
+  globex_close: {time: "16:00", tz: America/Chicago, day: Friday}
+  maintenance_break:
+    start: {time: "16:00", tz: America/Chicago}
+    end: {time: "17:00", tz: America/Chicago}
+    days: [Monday, Tuesday, Wednesday, Thursday]
+  source: https://www.cmegroup.com/markets/equities/sp/micro-e-mini-sandp-500.contractSpecs.html
+  accessed: 2026-07-31
+  evidence_level: moderate
+  note: >
+    CME publishes hours in Central Time. The strategy's session boundaries are defined
+    in America/New_York per the design requirement. Both zones are DST-aware and must
+    be converted through zoneinfo, never through a fixed offset. Exchange timestamps
+    are additionally retained in UTC.
+
+# ---------------------------------------------------------------------------
+# Roll policy.
+# ---------------------------------------------------------------------------
+roll:
+  classification: DESIGN
+  method: volume_crossover
+  rule: >
+    The active contract is the dated contract with the greater trailing 1-session
+    total volume, evaluated at each session close using only data available at that
+    close. Roll takes effect at the START of the following session, never intrabar.
+  stop_new_entries_days_before_expiry: 5
+  open_position_policy_at_roll: close_in_expiring_contract_do_not_migrate
+  back_adjustment: forbidden_for_executable_levels
+  note: >
+    Unadjusted traded prices from the active dated contract are used for VWAP, bands,
+    volume profile, opening range, stops, targets, fills, and P&L. A back-adjusted
+    continuous series may be constructed for long-horizon regime research only, must
+    record its adjustment method, and is forbidden from feeding any executable level.
+    Roll weeks are additionally tagged so results can be reported with and without them.

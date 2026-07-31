@@ -1,0 +1,209 @@
+# Topstep $50,000 Trading Combine rule configuration
+# ---------------------------------------------------------------------------
+# VERSION:            1.0.0
+# CREATED:            2026-07-31
+# VERIFICATION STATE: PARTIAL. See `verification` block on each field.
+#
+# This file encodes FIRM RULE SEMANTICS ONLY. It contains no signal logic and no
+# strategy parameters. The risk engine reads this file; the strategy engine never
+# does. Changing this file must never change a trading signal.
+#
+# SOURCE QUALITY WARNING
+# Direct fetch of topstep.com and help.topstep.com returned HTTP 403 from this
+# environment. Every value below sourced as `topstep_help_center` was obtained via
+# search-engine summaries of those official pages, NOT by loading the pages. Before
+# any capital is committed, a human must open each cited URL and confirm each value.
+# Fields marked `verification: UNVERIFIED` were not resolved at all and carry
+# materially different risk depending on which interpretation is correct.
+# ---------------------------------------------------------------------------
+
+meta:
+  firm: Topstep
+  product: Trading Combine
+  account_size_usd: 50000
+  config_version: 1.0.0
+  verified_on: 2026-07-31
+  verified_by: automated search research, NOT primary-source fetch
+  requires_human_reverification: true
+
+# ---------------------------------------------------------------------------
+# Values the account owner supplied. Research CONFIRMED all of these.
+# ---------------------------------------------------------------------------
+account:
+  starting_balance_usd: 50000
+  profit_target_usd: 3000
+  target_balance_usd: 53000
+  verification: CONFIRMED
+  source: https://help.topstep.com/en/articles/8284197-trading-combine-parameters
+  accessed: 2026-07-31
+  evidence_level: moderate
+  note: >
+    Owner-stated values matched research. This is the EVALUATION target, not a daily
+    profit target. It must never be used as a per-day objective.
+
+maximum_loss_limit:
+  # The "MLL". Owner called this the trailing drawdown / loss buffer.
+  buffer_usd: 2000
+  initial_floor_usd: 48000
+  trail_basis: end_of_day_balance
+  trails_down: false
+  locks_permanently_at_usd: 50000      # i.e. once EOD balance reaches 52000
+  verification: CONFIRMED
+  source: https://help.topstep.com/en/articles/8284204-what-is-the-maximum-loss-limit
+  accessed: 2026-07-31
+  evidence_level: moderate
+  official_example: >
+    Start: balance 50000, MLL 48000. Day 1 +500 -> balance 50500, MLL trails to 48500.
+    Day 2 -500 -> balance 50000, MLL STAYS at 48500. This exactly reproduces the
+    owner-stated ratchet (50500 -> floor 48500), which is therefore CONFIRMED.
+  note: >
+    The MLL stops trailing permanently once it reaches the 50000 starting balance.
+    An earlier secondary source claimed the floor "freezes at 50000 when EOD balance
+    reaches 52000". That is the same rule stated from the other end, not a conflict.
+
+# ---------------------------------------------------------------------------
+# Rules the owner's description OMITTED. These change sizing materially.
+# ---------------------------------------------------------------------------
+daily_loss_limit:
+  enabled: true
+  limit_usd: 1000
+  measured_from: prior_day_closing_balance
+  resets_at: "17:00"
+  resets_tz: America/Chicago
+  verification: RESEARCHED_NOT_OWNER_STATED
+  source: https://help.topstep.com/en/articles/10490293-daily-loss-limit-in-the-trading-combine-and-express-funded-account
+  accessed: 2026-07-31
+  evidence_level: moderate
+  risk_note: >
+    CRITICAL. This was absent from the owner's provisional description. At 1000 USD it
+    is HALF the 2000 USD MLL buffer and is therefore the BINDING per-day constraint,
+    not the MLL. All per-trade sizing must be derived from the DLL first and checked
+    against the MLL second. One secondary source claimed Topstep removed the separate
+    daily limit in 2024 and then restated a 1000 USD limit in the same summary. That
+    self-contradiction is unresolved and is a specific item for human verification.
+
+consistency_rule:
+  enabled: true
+  max_single_day_share_of_profit: 0.50
+  implied_max_winning_day_usd: 1500     # 0.50 * 3000 profit target
+  verification: RESEARCHED_NOT_OWNER_STATED
+  source: https://www.quantvps.com/blog/topstep-consistency-rule
+  accessed: 2026-07-31
+  evidence_level: weak
+  risk_note: >
+    Absent from the owner's description. Secondary source only; the exact mechanism
+    (whether it blocks payout, extends the evaluation, or raises a consistency target)
+    was not resolved. Sources disagree on whether the denominator is the profit target
+    or total accumulated profit, and one cited 40% for a different account type.
+    Treat as a soft cap pending verification. Consequence if real: a single outsized
+    winning day can invalidate an otherwise passing evaluation, which is an argument
+    against high-variance sizing independent of the trading edge.
+
+position_limits:
+  max_mini_equivalents: 5
+  micro_to_mini_ratio: 10
+  max_micro_contracts: 50               # 5 * 10
+  verification: RESEARCHED_NOT_OWNER_STATED
+  source: https://help.topstep.com/en/articles/8284197-trading-combine-parameters
+  accessed: 2026-07-31
+  evidence_level: moderate
+  note: >
+    Not binding for this project. The risk-derived micro sizing in SPECIFICATION.md
+    section 10 lands at 1 to 3 contracts, far below the 50-micro cap. Encoded for
+    completeness and to fail closed if sizing logic ever produces a large number.
+
+minimum_trading_days:
+  days: 3
+  verification: UNVERIFIED
+  source: https://help.topstep.com/en/articles/8284215-express-funded-account-parameters
+  accessed: 2026-07-31
+  evidence_level: weak
+  note: >
+    The 3-day figure was cited in the context of the Express Funded Account and the
+    consistency payout path, NOT clearly for the Trading Combine itself. Do not rely
+    on this value. Human verification required.
+
+automation:
+  permitted: true
+  verification: UNVERIFIED
+  source: https://tradecovex.com/guides/topstep-combine-rules-2026
+  accessed: 2026-07-31
+  evidence_level: weak
+  note: >
+    Secondary/affiliate source claims Topstep permits full automation in both
+    evaluation and funded accounts. This is load-bearing for an automated system and
+    is currently supported only by a low-quality source. MUST be confirmed in
+    Topstep's own terms before any automated deployment.
+
+# ---------------------------------------------------------------------------
+# UNRESOLVED SEMANTICS. Each materially changes risk. All default to the most
+# conservative interpretation so the engine fails closed.
+# ---------------------------------------------------------------------------
+unresolved_semantics:
+
+  breach_measure:
+    question: Is a breach evaluated on account BALANCE or on EQUITY including open P&L?
+    resolved: false
+    conservative_default: equity
+    consequence: >
+      If equity, an open position's unrealized loss can breach the MLL intraday even
+      if it would have recovered. This is the single most important unresolved item
+      because it determines whether the stop distance or the MLL is the real risk cap.
+
+  mll_monitoring_frequency:
+    question: Is the MLL enforced intraday in real time, or only at settlement?
+    resolved: false
+    conservative_default: intraday_realtime
+    consequence: >
+      Topstep documentation describes the MLL as END-OF-DAY *trailing*, meaning the
+      floor MOVES only at end of day. That is a separate question from whether a
+      BREACH can occur intraday. The safe assumption, and the industry norm, is that
+      touching the MLL intraday liquidates the account immediately. Engine assumes
+      intraday enforcement.
+
+  threshold_touch_or_cross:
+    question: Does touching the threshold breach, or must it be crossed?
+    resolved: false
+    conservative_default: touch_breaches
+
+  fees_count_toward_limits:
+    question: Do commissions and exchange fees count toward the DLL and MLL?
+    resolved: false
+    conservative_default: true
+
+  target_completion_timing:
+    question: >
+      Does reaching the 3000 USD profit target complete the evaluation immediately, or
+      only after an end-of-day balance update?
+    resolved: false
+    conservative_default: end_of_day_update
+    consequence: >
+      If end-of-day, profit reached intraday remains at risk until settlement, so the
+      engine must halt and flatten on target rather than continue trading.
+
+  required_flat_time:
+    question: Is there a mandatory flat time, and may positions be held overnight?
+    resolved: false
+    conservative_default_flat_time: "15:10"
+    conservative_default_tz: America/Chicago
+    overnight_permitted_default: false
+    consequence: >
+      Not resolved by research. The engine defaults to flat-by-15:10 CT and no
+      overnight holding. If overnight is in fact permitted this default costs some
+      opportunity; if it is not permitted the opposite default would cause a rule
+      violation. Fail closed.
+
+# ---------------------------------------------------------------------------
+# Safety margins applied by the risk engine ON TOP of the firm thresholds.
+# These are DESIGN choices, not firm rules.
+# ---------------------------------------------------------------------------
+safety_margins:
+  classification: DESIGN
+  mll_reserve_fraction: 0.25            # treat only 75% of the 2000 buffer as usable
+  usable_mll_usd: 1500
+  dll_reserve_fraction: 0.20            # treat only 80% of the 1000 DLL as usable
+  usable_dll_usd: 800
+  rationale: >
+    Reserves absorb slippage beyond the stop, opening gaps, fees, and the unresolved
+    rule semantics above. Trading to the exact published threshold leaves no room for
+    any of these and converts a normal adverse fill into a rule breach.
