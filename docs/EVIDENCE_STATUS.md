@@ -1,7 +1,7 @@
 # Evidence Status and Environment Audit
 
-**Document version:** 1.0
-**Date of audit:** 2026-07-31
+**Document version:** 1.1
+**Date of audit:** 2026-07-31, updated 2026-08-01
 **Auditor:** automated environment probe, results recorded verbatim below.
 
 This document exists to fix the evidence boundary before any specification or code is
@@ -181,6 +181,26 @@ entirely plausible.
 session within tolerance of the expected count for that session type." It was specified and
 not implemented. The specified gate would have caught this on the first run. Gates that
 exist only in the specification protect nothing.
+
+**RESOLVED 2026-08-01.** Re-download with the corrected stepping, verified by the new gate:
+
+| Contract | Before | After | Expected | Complete | Gain |
+|---|---:|---:|---:|---:|---:|
+| MES 202512 | 25,395 | 98,955 | ~97,980 | 101% | 3.9x |
+| MES 202603 | 27,795 | 96,015 | ~97,980 | 98% | 3.5x |
+| MES 202606 | 26,835 | 98,775 | ~97,980 | 101% | 3.7x |
+| MES 202609 | 19,590 | 53,340 | ~51,060 | 104% | 2.7x |
+
+MNQ matches MES row for row. Total **694,170 one-minute bars** across both instruments.
+`session_completeness` no longer fires on any 1-minute file. Counts slightly above 100%
+reflect the crude 5/7 trading-day estimate in the "expected" column, not surplus data.
+
+The retained 1-hour files were pulled before the fix and still show a
+`session_completeness` warning on MES 202603 (21 of 104 days under 50%). That is benign and
+expected: at hourly resolution only the boundary session of each 30-day chunk can be
+truncated, and most flagged days coincide with the thin pre-front-month period where IBKR
+legitimately omits hours containing no trades. The hourly files were a smoke test and are
+not research inputs.
 
 ---
 
