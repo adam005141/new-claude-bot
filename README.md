@@ -18,12 +18,13 @@ E-mini Nasdaq-100 (MNQ) intraday futures.
 | [`docs/SPECIFICATION.md`](docs/SPECIFICATION.md) | The 22-section implementation-grade specification |
 | [`config/instruments.yaml`](config/instruments.yaml) | Contract specs, trading hours, roll policy |
 | [`config/topstep_50k_combine.v1.yaml`](config/topstep_50k_combine.v1.yaml) | Versioned prop rule config with sources, dates, and unresolved semantics |
+| [`docs/WINDOWS_SETUP.md`](docs/WINDOWS_SETUP.md) | **Windows walkthrough**: install to downloaded data, step by step |
 | [`tools/`](tools/) | Data acquisition: IBKR downloader and ingest validator |
 
 ## Getting data
 
-IB Gateway setup and the exact commands are in
-[`docs/DATA_SOURCING.md`](docs/DATA_SOURCING.md) section 3a.
+**On Windows, follow [`docs/WINDOWS_SETUP.md`](docs/WINDOWS_SETUP.md)** for the full
+walkthrough from installing Python through to validated data. The condensed version:
 
 ```bash
 pip install -r requirements.txt
