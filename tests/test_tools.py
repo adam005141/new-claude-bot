@@ -18,7 +18,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from tools.ibkr_download import (  # noqa: E402
-    ContractSpec, Request, plan_requests, merge_cache,
+    ContractSpec, Request, plan_requests, merge_cache, DURATION_FOR_BAR_SIZE,
     estimate_runtime_seconds, format_duration, _synthetic_contracts,
 )
 from tools.validate_data import validate_frame  # noqa: E402
@@ -47,11 +47,10 @@ def test_plan_walks_backward_within_the_window():
                          start=datetime(2025, 1, 1, tzinfo=UTC),
                          end=datetime(2026, 12, 31, tzinfo=UTC),
                          active_window_days=10)
-    assert len(reqs) == 10                       # 10 days, 1-day chunks
+    assert len(reqs) == 10                       # 10 days, stepping 1 day at a time
     ends = [r.end_dt for r in reqs]
     assert ends == sorted(ends, reverse=True)    # newest first
     assert max(ends) == datetime(2026, 3, 20, tzinfo=UTC)
-    assert all(r.duration == "1 D" for r in reqs)
 
 
 def test_plan_clips_to_caller_date_range():
@@ -81,9 +80,39 @@ def test_larger_bar_sizes_use_bigger_chunks():
               end=datetime(2026, 12, 31, tzinfo=UTC), active_window_days=90)
     minute = plan_requests([spec], "1 min", ["TRADES"], **kw)
     hourly = plan_requests([spec], "1 hour", ["TRADES"], **kw)
-    assert len(minute) == 90
-    assert len(hourly) == 3
+    assert len(minute) == 90          # 1-day step
+    assert len(hourly) == 4           # 25-day step
     assert len(hourly) < len(minute)
+
+
+def test_requests_overlap_so_no_session_is_caught_midway():
+    """
+    Regression test for the truncation bug.
+
+    IBKR's durationStr is session-relative: an endDateTime landing partway through a live
+    session returns only the elapsed part of it. Stepping by exactly the duration meant
+    weekday anchors produced 60-bar responses against a 1380-bar session (~26% complete).
+
+    The duration must therefore cover strictly more ground than the step, so every session
+    falls entirely inside at least one request.
+    """
+    for bar_size, (_dur, duration_days, step_days) in DURATION_FOR_BAR_SIZE.items():
+        assert step_days < duration_days, (
+            f"{bar_size}: step {step_days}d must be smaller than duration {duration_days}d, "
+            "otherwise a session anchored mid-way is silently truncated"
+        )
+
+
+def test_one_minute_steps_daily_with_two_day_duration():
+    spec = mkspec("202603", "20260320")
+    reqs = plan_requests([spec], "1 min", ["TRADES"],
+                         start=datetime(2025, 1, 1, tzinfo=UTC),
+                         end=datetime(2026, 12, 31, tzinfo=UTC),
+                         active_window_days=10)
+    assert len(reqs) == 10                        # unchanged request count
+    assert all(r.duration == "2 D" for r in reqs)  # but each covers two days
+    ends = sorted({r.end_dt for r in reqs}, reverse=True)
+    assert (ends[0] - ends[1]).days == 1           # stepping one day at a time
 
 
 def test_rejects_unsupported_arguments():
@@ -297,3 +326,60 @@ def test_price_jump_flagged():
     df.loc[200:, ["open", "high", "low", "close"]] += 500.0
     rep = validate_frame(df)
     assert any(f.gate == "price_continuity" for f in rep.findings)
+
+
+def test_truncated_sessions_are_quarantined():
+    """
+    Reproduces the real 2026-08-01 failure: most days hold a fraction of a session while a
+    few weekend-anchored responses hold a full one. Every other gate passes; only
+    session_completeness catches it.
+    """
+    frames = []
+    start = pd.Timestamp("2026-03-02", tz="UTC")
+    for day in range(40):
+        d = start + pd.Timedelta(days=day)
+        n = 1380 if day % 7 in (5, 6) else 120     # weekends full, weekdays truncated
+        ts = pd.date_range(d, periods=n, freq="1min", tz="UTC")
+        c = pd.Series(range(n), dtype="float64") * 0.25 + 5800.0
+        frames.append(pd.DataFrame({
+            "timestamp_utc": ts, "open": c, "high": c + 0.5, "low": c - 0.5,
+            "close": c, "volume": 500,
+        }))
+    df = pd.concat(frames, ignore_index=True)
+
+    rep = validate_frame(df)
+    assert not rep.ok, "truncated sessions must quarantine, not pass"
+    f = next(x for x in rep.errors if x.gate == "session_completeness")
+    assert f.detail["median_bars_per_day"] == 120
+    assert f.detail["reference_full_session_bars"] == 1380
+    assert f.detail["median_completeness"] < 0.2
+
+
+def test_complete_sessions_pass_completeness_gate():
+    frames = []
+    start = pd.Timestamp("2026-03-02", tz="UTC")
+    for day in range(20):
+        ts = pd.date_range(start + pd.Timedelta(days=day), periods=1380, freq="1min", tz="UTC")
+        c = pd.Series(range(1380), dtype="float64") * 0.25 + 5800.0
+        frames.append(pd.DataFrame({
+            "timestamp_utc": ts, "open": c, "high": c + 0.5, "low": c - 0.5,
+            "close": c, "volume": 500,
+        }))
+    rep = validate_frame(pd.concat(frames, ignore_index=True))
+    assert not any(f.gate == "session_completeness" for f in rep.findings)
+
+
+def test_hourly_bars_do_not_false_positive_on_completeness():
+    """Hourly data has ~23 bars per session; the gate must not read that as truncation."""
+    frames = []
+    start = pd.Timestamp("2026-03-02", tz="UTC")
+    for day in range(30):
+        ts = pd.date_range(start + pd.Timedelta(days=day), periods=23, freq="1h", tz="UTC")
+        c = pd.Series(range(23), dtype="float64") * 2.0 + 5800.0
+        frames.append(pd.DataFrame({
+            "timestamp_utc": ts, "open": c, "high": c + 1, "low": c - 1,
+            "close": c, "volume": 5000,
+        }))
+    rep = validate_frame(pd.concat(frames, ignore_index=True))
+    assert not any(f.gate == "session_completeness" and f.severity == "error"
+                   for f in rep.findings)

@@ -132,6 +132,58 @@ that blocks the MCP bridge. See `DATA_SOURCING.md` section 2.
 
 ---
 
+## 4a. Download truncation incident, 2026-08-01
+
+Evidence level: `strong` (measured on the owner's own download).
+
+**A completed 1-minute download passed all validation gates while being roughly 26%
+complete.** Recorded here because it is the exact class of failure this project is built to
+catch, and it was caught by arithmetic on the summary output rather than by the validator.
+
+**Symptom.** Per-request bar counts of 60, 120, and 301 against a full CME session of
+~1380. Weekend-anchored requests returned the full 1380; weekday anchors did not.
+
+**Cause.** IBKR's `durationStr` is SESSION-RELATIVE, not wall-clock relative. The downloader
+stepped `endDateTime` by exactly one day at 00:00 UTC, which is 19:00 or 20:00 ET, one to
+five hours into the session that had just opened. A `1 D` request anchored there returns
+only the elapsed portion of that session. Weekends have no live session to truncate
+against, so they returned a complete one.
+
+**Measured completeness:**
+
+| File | Bars | Trading days | Expected | Complete |
+|---|---:|---:|---:|---:|
+| MES 202512 | 25,395 | ~71 | ~97,980 | 25.9% |
+| MES 202603 | 27,795 | ~71 | ~97,980 | 28.4% |
+| MES 202606 | 26,835 | ~71 | ~97,980 | 27.4% |
+| MES 202609 | 19,590 | ~37 | ~51,060 | 38.4% |
+
+**Why every gate passed.** The bars that were present were individually valid: timestamps
+monotonic and unique, OHLC coherent, volume positive, front-month attribution sensible.
+Nothing was malformed. Most of each session was simply absent.
+
+**Why this was dangerous.** A truncated dataset is worse than a missing one. The retained
+fraction is NON-RANDOM, biased toward whichever hours the anchor happened to capture.
+VWAP, volume profile, opening range, relative volume, and every session statistic would
+have been computed over a systematically skewed slice of the session and would have looked
+entirely plausible.
+
+**Fixes applied.**
+1. `tools/ibkr_download.py`: request duration now strictly exceeds the cursor step, so every
+   session falls entirely inside at least one request regardless of anchor placement.
+   Overlap is deduplicated on merge. Request count for 1-minute data is unchanged.
+2. `tools/validate_data.py`: added `gate_session_completeness`, which compares median
+   bars-per-day against the 90th-percentile day and QUARANTINES below 80%. Verified against
+   a replica of the failed dataset: quarantines at 9% median completeness.
+3. Two regression tests pin the invariant that step < duration for every bar size.
+
+**Process lesson.** SPECIFICATION.md section 4 gate 3 already required "bar count per
+session within tolerance of the expected count for that session type." It was specified and
+not implemented. The specified gate would have caught this on the first run. Gates that
+exist only in the specification protect nothing.
+
+---
+
 ## 5. Claim labeling convention used throughout this repository
 
 Every substantive claim carries one of these labels:

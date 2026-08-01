@@ -60,14 +60,28 @@ log = logging.getLogger("ibkr_download")
 # larger windows for some sizes, but oversized requests fail intermittently
 # rather than cleanly, which is worse during a multi-hour run.
 # ---------------------------------------------------------------------------
-DURATION_FOR_BAR_SIZE: dict[str, tuple[str, int]] = {
-    # bar size    -> (IBKR durationStr, chunk length in calendar days)
-    "1 min":      ("1 D", 1),
-    "5 mins":     ("1 W", 7),
-    "15 mins":    ("1 W", 7),
-    "30 mins":    ("1 M", 30),
-    "1 hour":     ("1 M", 30),
-    "1 day":      ("1 Y", 365),
+# IBKR's durationStr is SESSION-RELATIVE, not wall-clock relative. If endDateTime falls
+# partway through a live trading session, "1 D" returns only the elapsed part of that
+# session, not a full day.
+#
+# This is not hypothetical. A run on 2026-08-01 stepping endDateTime by exactly one day at
+# 00:00 UTC produced 60-bar, 120-bar, and 301-bar responses on weekdays (00:00 UTC is
+# 19:00/20:00 ET, one to five hours into the session that just opened) while weekend
+# anchors, which have no live session to truncate against, returned the full 1380. Overall
+# completeness was about 26%.
+#
+# Fix: request a LONGER duration than the step, so every session is fully contained in at
+# least one request regardless of where the anchor lands. Overlap is removed by
+# deduplicating on timestamp during the merge. Request count is unchanged for 1-minute
+# data; only the bytes per response go up.
+DURATION_FOR_BAR_SIZE: dict[str, tuple[str, int, int]] = {
+    # bar size -> (IBKR durationStr, days the duration covers, days to step the cursor)
+    "1 min":      ("2 D", 2, 1),
+    "5 mins":     ("1 W", 7, 5),
+    "15 mins":    ("1 W", 7, 5),
+    "30 mins":    ("1 M", 30, 25),
+    "1 hour":     ("1 M", 30, 25),
+    "1 day":      ("1 Y", 365, 300),
 }
 
 # IBKR allows at most 60 historical requests per 10 minutes, and rejects identical
@@ -145,7 +159,7 @@ def plan_requests(
             raise ValueError(f"unsupported whatToShow {w!r}; expected one of "
                              f"{sorted(VALID_WHAT_TO_SHOW)}")
 
-    duration, chunk_days = DURATION_FOR_BAR_SIZE[bar_size]
+    duration, _duration_days, step_days = DURATION_FOR_BAR_SIZE[bar_size]
     requests: list[Request] = []
 
     for c in sorted(contracts, key=lambda x: x.contract_month):
@@ -169,7 +183,7 @@ def plan_requests(
                     bar_size=bar_size,
                     what_to_show=what,
                 ))
-                cursor -= timedelta(days=chunk_days)
+                cursor -= timedelta(days=step_days)
 
     return requests
 

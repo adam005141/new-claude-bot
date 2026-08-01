@@ -178,6 +178,64 @@ def gate_front_month_attribution(df: pd.DataFrame, out: list[Finding]) -> None:
         ))
 
 
+def gate_session_completeness(df: pd.DataFrame, out: list[Finding]) -> None:
+    """
+    Each trading session must contain roughly a full session's worth of bars.
+
+    This catches TRUNCATED DOWNLOADS, which are invisible to every other gate: the bars
+    present are individually valid, timestamps are monotonic, OHLC is coherent, volume is
+    positive. Nothing looks wrong except that most of each session is simply absent.
+
+    Real failure this exists to catch: IBKR's durationStr is session-relative, so an
+    endDateTime landing partway through a live session returns only the elapsed part of it.
+    A 2026-08-01 run produced 60, 120, and 301-bar weekday responses against a 1380-bar
+    full session, roughly 26% completeness overall, and passed every other gate.
+
+    A truncated dataset is worse than a missing one. VWAP, volume profile, opening range,
+    and every session statistic would be computed over a NON-RANDOM fraction of the
+    session, biased toward whichever hours the anchor happened to capture.
+    """
+    if len(df) < 100:
+        return
+
+    per_day = df.groupby(df["timestamp_utc"].dt.date).size()
+    if len(per_day) < 5:
+        return
+
+    # Reference "full session" = the 90th percentile of observed daily counts. Using a high
+    # quantile rather than the max avoids a single weekend-spanning response setting the bar.
+    full = per_day.quantile(0.90)
+    if full <= 0:
+        return
+
+    completeness = (per_day / full).clip(upper=1.0)
+    median_completeness = float(completeness.median())
+    truncated = int((completeness < 0.5).sum())
+
+    detail = {
+        "median_completeness": round(median_completeness, 3),
+        "reference_full_session_bars": int(full),
+        "median_bars_per_day": int(per_day.median()),
+        "days": int(len(per_day)),
+        "days_under_50pct": truncated,
+    }
+
+    if median_completeness < 0.80:
+        out.append(Finding(
+            "session_completeness", "error",
+            f"sessions are truncated: median day has {int(per_day.median())} bars against a "
+            f"full session of ~{int(full)} ({median_completeness:.0%} complete). "
+            "Re-download before using this data.",
+            detail,
+        ))
+    elif truncated > 0.20 * len(per_day):
+        out.append(Finding(
+            "session_completeness", "warning",
+            f"{truncated} of {len(per_day)} days are under 50% of a full session",
+            detail,
+        ))
+
+
 def gate_price_continuity(df: pd.DataFrame, out: list[Finding],
                           max_jump_atr: float = MAX_JUMP_ATR) -> None:
     if len(df) < 30:
@@ -212,6 +270,7 @@ def validate_frame(df: pd.DataFrame, path: str = "<frame>") -> Report:
     gate_gaps(df, rep.findings)
     gate_volume(df, rep.findings)
     gate_front_month_attribution(df, rep.findings)
+    gate_session_completeness(df, rep.findings)
     gate_price_continuity(df, rep.findings)
     return rep
 
