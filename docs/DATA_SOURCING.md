@@ -27,7 +27,8 @@ The MCP bridge exposes only `period` (measured backward from now), so the retrie
 window always ends at the present moment. The native API's `reqHistoricalData` exposes
 **`endDateTime`**, which lets you anchor the window anywhere in the past and page backward
 through history in chunks. That single parameter is the difference between "last 2 days of
-1-minute bars" and "two years of 1-minute bars, contract by contract."
+1-minute bars" and "months of 1-minute bars, contract by contract." How many months is
+answered by measurement in 2.6, not by the documentation.
 
 ### 2.2 Documented limits
 
@@ -39,9 +40,11 @@ through history in chunks. That single parameter is the difference between "last
 | Request pacing | Enforced ~10 seconds between historical requests, plus a rolling cap | A full pull takes hours, not minutes. Budget for it. |
 | Symbol/barSize/duration combinations | Not all combinations are served | Expect to probe empirically |
 
-The 2-year expired-futures window is what makes a defensible backtest possible: you can
-retrieve each dated MES and MNQ contract over the period when it was actually the liquid
-front month, which is exactly what the specification requires for executable price levels.
+The expired-futures window is what makes a defensible backtest possible: you can retrieve
+each dated MES and MNQ contract over the period when it was actually the liquid front
+month, which is exactly what the specification requires for executable price levels. Note
+that the usable window is ~8 months in practice rather than the documented 2 years; see
+2.6 for the measurement.
 
 ### 2.3 What it costs
 
@@ -118,7 +121,7 @@ one-off per-symbol fee. That is the cheapest route to genuine regime diversity.
 
 | Source | Coverage | Cost | Verdict |
 |---|---|---|---|
-| **IBKR TWS API** | ~2 yr expired futures, 1-min+, TRADES/BID/ASK | Free with subscription | **Best free option.** Start here. |
+| **IBKR TWS API** | **~11.5 months measured**, 1-min+, TRADES/BID/ASK | Free with subscription | **Best free option.** Start here. Shorter than its docs claim; see 2.6 |
 | **Databento** | CME MBO/MBP-10, full order book, tick, since 2010 | Paid, with free trial credit on signup | **Best paid option by a wide margin.** Real book data means real queue and slippage modeling. Use the trial to sample a few months and see whether the edge survives honest costs. |
 | **FirstRate Data** | ~7 yr MNQ, ~19 yr NQ, 1-min bars, plus tick | Paid per-symbol, one-off, free samples available | Good value for clean OHLCV. No book depth. Free samples are enough to build and test the loader. |
 | **CME DataMine** | Official exchange source, full historical | Paid, some free samples | Authoritative, but expensive and awkward for research-scale use |
@@ -186,8 +189,8 @@ and contract resolution all work. Only then start the long one.
 python tools/ibkr_download.py --symbols MES MNQ --bar-size "1 min" --years 2 --port 4002
 ```
 
-**This takes about 4.5 hours** (1,500 requests at 11 seconds each). That pacing is not
-padding: IBKR permits 60 historical requests per 10 minutes and rejects identical
+**This takes about 2 to 2.5 hours** (roughly 700 requests at 11 seconds each). That pacing
+is not padding: IBKR permits 60 historical requests per 10 minutes and rejects identical
 requests inside 15 seconds, and tripping the limit gets the connection throttled.
 
 **It is safe to interrupt.** Every request is cached to its own file and a rerun skips

@@ -6,8 +6,8 @@ Complete step-by-step for Windows with IB Gateway. Assumes no prior setup.
 inside it.** They are not alternatives. You will open PowerShell, and type `git` commands
 into it. If you would rather not install Git at all, Step 2 has a no-Git alternative.
 
-Total time: about 20 minutes of setup, then a 5-minute test, then a 4.5-hour download that
-runs unattended.
+Total time: about 20 minutes of setup, then a 5-minute test, then a download of roughly 2
+to 2.5 hours that runs unattended.
 
 ---
 
@@ -160,7 +160,7 @@ Open IB Gateway and log in.
 
 **Configure → Lock and Exit → Auto Logoff / Never**
 
-Gateway logs itself out once a day by default. A 4.5-hour download will die partway if it
+Gateway logs itself out once a day by default. A multi-hour download will die partway if it
 happens mid-run.
 
 ### Market data subscription
@@ -192,13 +192,18 @@ You should see lines scrolling like:
 ```
 14:02:11 INFO    connecting to 127.0.0.1:4002 (clientId=17)
 14:02:12 INFO    connected: server version 176
-14:02:13 INFO    MES: found 13 dated contracts (202409 to 202709)
-14:02:14 INFO    planned 30 requests (0 already cached, 30 to fetch)
-14:02:14 INFO    estimated runtime: 5m 30s at 11.0s pacing
-14:02:25 INFO    [1/30] MES 202409 TRADES end=2024-09-20 -> 391 bars
+14:02:13 INFO    MES: found 8 dated contracts (202512 to 202709)
+14:02:14 INFO    planned 14 requests (0 already cached, 14 to fetch)
+14:02:14 INFO    estimated runtime: 2m 34s at 11.0s pacing
+14:02:25 INFO    [1/14] MES 202512 TRADES end=2025-12-19 -> 477 bars
 ```
 
-The important part is **`-> 391 bars`** and not `-> 0 bars`. Bars means real data.
+The important part is **`-> 477 bars`** and not `-> 0 bars`. Bars means real data.
+
+Around 8 contracts is correct, and only about 4 of them carry usable history. The rest are
+current or future contracts with nothing to fetch yet, and the planner skips them. The
+offline dry-run predicts more contracts than this because it synthesizes a full quarterly
+cycle; IBKR itself is the authority.
 
 Then check the quality:
 
@@ -212,7 +217,7 @@ You want `PASS` lines. `QUARANTINE` means something is wrong with that file.
 
 ---
 
-## Step 7: The real download, about 4.5 hours
+## Step 7: The real download, about 2 to 2.5 hours
 
 Only after Step 6 passed:
 
@@ -289,4 +294,4 @@ Send me the output of `validate_data.py` and I will start building the engine.
 > executed against a real gateway, because the environment they were written in has no
 > Gateway and no network access. The planning, merging, and validation logic is covered by
 > 22 tests that pass. Step 6 exists precisely so the first real contact with IB is a
-> 5-minute test rather than a 4.5-hour one.
+> 5-minute test rather than a multi-hour one.
