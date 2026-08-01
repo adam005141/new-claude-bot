@@ -18,6 +18,23 @@ E-mini Nasdaq-100 (MNQ) intraday futures.
 | [`docs/SPECIFICATION.md`](docs/SPECIFICATION.md) | The 22-section implementation-grade specification |
 | [`config/instruments.yaml`](config/instruments.yaml) | Contract specs, trading hours, roll policy |
 | [`config/topstep_50k_combine.v1.yaml`](config/topstep_50k_combine.v1.yaml) | Versioned prop rule config with sources, dates, and unresolved semantics |
+| [`tools/`](tools/) | Data acquisition: IBKR downloader and ingest validator |
+
+## Getting data
+
+IB Gateway setup and the exact commands are in
+[`docs/DATA_SOURCING.md`](docs/DATA_SOURCING.md) section 3a.
+
+```bash
+pip install -r requirements.txt
+
+python tools/ibkr_download.py --symbols MES --bar-size "1 hour" --years 2 --dry-run   # plan
+python tools/ibkr_download.py --symbols MES --bar-size "1 hour" --years 2             # smoke test
+python tools/ibkr_download.py --symbols MES MNQ --bar-size "1 min" --years 2          # ~4.5 hours
+python tools/validate_data.py data/
+```
+
+The long pull is resumable: every request is cached, and a rerun skips what it has.
 
 ---
 
@@ -46,8 +63,9 @@ which is sufficient. See [`docs/DATA_SOURCING.md`](docs/DATA_SOURCING.md).
   cannot generate orders.
 - **Cost is the controlling test.** A micro pays a parent-sized spread for one tenth the
   dollar move. The expected-move floor is a hard gate at signal time, not a diagnostic.
-- **Risk derives from the $2,000 loss buffer**, never the $50,000 headline balance. The
-  $1,000 daily loss limit turns out to be the binding constraint.
+- **Risk derives from the $2,000 loss buffer**, never the $50,000 headline balance.
+  Topstep enforces no daily loss limit, so the buffer is the only firm circuit breaker
+  and the engine adds a self-imposed daily stop by default.
 - **One-contract exits are the primary path.** Scale-outs are structurally forbidden at
   sizes that cannot execute them.
 - **Adverse assumptions on every ambiguity.** Same-bar stop-and-target resolves to the

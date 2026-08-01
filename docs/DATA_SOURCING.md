@@ -94,6 +94,118 @@ Accessed 2026-07-31.
 
 ---
 
+## 3a. Step-by-step: pulling the data with IB Gateway running
+
+Tooling for this lives in `tools/`. You already have IB Gateway running, so start here.
+
+### Step 1: turn on the API in IB Gateway
+
+In Gateway: **Configure → Settings → API → Settings**.
+
+- Tick **Enable ActiveX and Socket Clients**
+- Tick **Read-Only API**. This project only reads data, and read-only makes it
+  impossible for a bug to place an order.
+- Note the **Socket port**. Defaults: `4002` Gateway paper, `4001` Gateway live,
+  `7497` TWS paper, `7496` TWS live.
+- Confirm `127.0.0.1` is under **Trusted IPs**.
+- Leave Gateway running and logged in. It cannot serve data while logged out, and it
+  auto-logs-out daily unless you set **Configure → Lock and Exit → Never**. A multi-hour
+  pull will die at the daily restart otherwise.
+
+### Step 2: market data subscription
+
+Historical CME futures data requires a **CME real-time** subscription on the account
+(Account Management → Market Data Subscriptions). Without it, requests return empty
+rather than erroring, which looks exactly like "no data exists." If you get empty
+results everywhere, check this first.
+
+### Step 3: install dependencies
+
+```bash
+pip install ib_async pandas pyarrow
+```
+
+### Step 4: smoke test before committing hours
+
+```bash
+# Plan only, no connection. Confirms the request math.
+python tools/ibkr_download.py --symbols MES --bar-size "1 min" --years 0.25 --dry-run
+
+# Smallest real pull: one instrument, hourly bars, ~5 minutes.
+python tools/ibkr_download.py --symbols MES --bar-size "1 hour" --years 2 --port 4002
+python tools/validate_data.py data/
+```
+
+If the hourly pull produces files that pass validation, the connection, subscription,
+and contract resolution all work. Only then start the long one.
+
+### Step 5: the real pull
+
+```bash
+python tools/ibkr_download.py --symbols MES MNQ --bar-size "1 min" --years 2 --port 4002
+```
+
+**This takes about 4.5 hours** (1,500 requests at 11 seconds each). That pacing is not
+padding: IBKR permits 60 historical requests per 10 minutes and rejects identical
+requests inside 15 seconds, and tripping the limit gets the connection throttled.
+
+**It is safe to interrupt.** Every request is cached to its own file and a rerun skips
+what it already has. If it dies overnight, rerun the same command.
+
+To add quote data for honest spread modeling, at 3x the runtime:
+
+```bash
+python tools/ibkr_download.py --symbols MES MNQ --what TRADES BID ASK --years 2
+```
+
+### Step 6: validate before trusting any of it
+
+```bash
+python tools/validate_data.py data/ --json data/validation_report.json
+```
+
+`PASS` means usable. `QUARANTINE` means do not use the file until you understand why.
+
+The gate to watch is **`front_month_attribution`**. It flags contracts whose data covers
+periods before they were the liquid front month. This is a real failure that the
+environment audit hit: the Sep-2026 MES contract returned a full year of daily bars, but
+volume was zero or single-digit for the first ten months. Research over that window would
+be studying a contract nobody traded. The warning tells you where to trim.
+
+### What you end up with
+
+```
+data/
+├── MES/
+│   ├── MES_202409_1min_TRADES.parquet
+│   ├── MES_202409_1min_TRADES.meta.json    # provenance: source, retrieval time, row count
+│   └── ...
+├── MNQ/
+└── _cache/                                  # per-request chunks; safe to delete after merge
+```
+
+Roughly 8 quarterly contracts per symbol, each covering its ~100-day front-month window,
+unadjusted, at 1-minute resolution. That is what the specification's backtest needs.
+
+### If something goes wrong
+
+| Symptom | Cause |
+|---|---|
+| `ConnectionRefusedError` | Gateway not running, wrong port, or API not enabled |
+| Connects, every file empty | Missing CME market data subscription (step 2) |
+| `pacing violation` in the log | Raise `--pacing` above 11 |
+| Empty only for the oldest contracts | Expected. IBKR serves expired futures ~2 years back; older is gone |
+| Dies partway through | Rerun the same command; it resumes from cache |
+| `clientId` already in use | Another script or TWS is connected; change `--client-id` |
+
+> **Untested-path warning.** The IB-connected code path has not been run against a live
+> gateway, because this sandbox has neither Gateway nor outbound network. The planning,
+> merging, and validation logic is covered by 22 offline tests that pass. The
+> `reqHistoricalData` interaction is written to the documented API and reviewed, but not
+> executed. Treat your first run as the real test of it, which is why step 4 exists.
+
+---
+
 ## 4. Recommended plan
 
 1. **Start with IBKR TWS API.** It is free, you already have the account, and the 2-year

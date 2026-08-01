@@ -1,0 +1,7 @@
+# Data acquisition and validation tooling (tools/).
+ib_async>=2.0
+pandas>=2.0
+pyarrow>=15.0
+
+# Tests
+pytest>=8.0

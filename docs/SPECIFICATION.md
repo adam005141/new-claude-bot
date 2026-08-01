@@ -372,14 +372,31 @@ Sizing derives from the **usable loss buffer**, never from the $50,000 headline 
 | Headline balance | $50,000 | Not risk capital. Never used in sizing. |
 | MLL buffer | $2,000 | `FIXED-FIRM` |
 | Usable MLL after 25% reserve | **$1,500** | `DESIGN` |
-| Daily loss limit | $1,000 | `FIXED-FIRM`, **omitted from the owner's description** |
-| Usable DLL after 20% reserve | **$800** | `DESIGN` |
+| Firm daily loss limit | **None** | `FIXED-FIRM`, see below |
+| Self-imposed daily stop | **$300** | `DESIGN`, owner may disable |
 
-**The DLL, not the MLL, is the binding daily constraint.** At $1,000 it is half the MLL
-buffer. Sizing is derived from the DLL first and checked against the MLL second.
+**Topstep enforces no daily loss limit.** It removed the default DLL on TopstepX Combines
+effective 2024-08-25, replacing it with an optional self-set "Personal DLL" that acts as a
+timeout and is not a rule violation. The owner has elected not to enable it.
 
-**Per-trade risk target `R_target` = $100** (`DESIGN`, `AWAITING-VALIDATION`). This yields
-8 full stops before the usable DLL and 15 before the usable MLL.
+> **Platform caveat, `UNRESOLVED`.** The removal reportedly applies only to the TopstepX
+> platform. NinjaTrader, Tradovate, Quantower, and TradingView are reported to still
+> enforce a DLL objective on Combine accounts. If orders route through any of those, a
+> firm-enforced DLL may still apply. See section 22 decision 10.
+
+**Consequence: the $2,000 MLL is the only firm loss constraint, so there is no circuit
+breaker between one bad session and evaluation failure.** A single day can consume the
+entire buffer. This makes the self-imposed daily stop a risk recommendation rather than a
+redundancy, and it is why the engine implements one by default.
+
+**Per-trade risk target `R_target` = $100** (`DESIGN`, `AWAITING-VALIDATION`). Against the
+usable MLL this is **15 full stops**; against the default $300 self-imposed daily stop it
+is **3 per session**, so the buffer spans at least 5 independent losing days.
+
+If the owner disables the self-imposed stop, sizing is unchanged but the engine will permit
+a single session to consume the full usable buffer. That is a legitimate choice and is
+logged as such, but it makes the losing-streak validation in section 10.4 strictly more
+important, not less.
 
 ### 10.2 Stop distance to integer contracts
 
@@ -502,11 +519,16 @@ rejection, and position-reconciliation mismatch.
 ```
 ACTIVE
   ├─ equity <= MLL_floor + safety_margin      -> HALTED_PERMANENT (flatten immediately)
-  ├─ daily_loss >= usable_DLL ($800)          -> HALTED_DAY (flatten, resume 17:00 CT)
+  ├─ daily_loss >= self_imposed_daily_stop    -> HALTED_DAY (flatten, resume 17:00 CT)
+  │     ($300 default; DESIGN, not a firm rule; owner may disable)
   ├─ balance >= target_balance ($53,000)      -> HALTED_TARGET (flatten, stop trading)
   ├─ now >= required_flat_time                -> FLATTEN_ONLY
   └─ any risk/data/reconciliation fault       -> HALTED_DAY (fail closed)
 ```
+
+The MLL branch is the only firm-enforced loss constraint. The daily branch is this
+project's own choice and is clearly separated from firm rules in the config, so disabling
+it can never be mistaken for relaxing a Topstep requirement.
 
 `MLL_floor` ratchets on **end-of-day balance** only, never intraday, never downward, and
 locks permanently at $50,000.
@@ -870,6 +892,8 @@ unknown · on early-close days unless explicitly enabled.
 | 7 | **Verify Topstep rules directly** | Required before any capital; 6 semantics unresolved |
 | 8 | **Confirm automation is permitted** | Load-bearing, currently weak-source only |
 | 9 | **Legs to build first** | A and B only; defer C as weakest |
+| 10 | **Execution platform** (TopstepX vs Tradovate / NinjaTrader / Quantower / TradingView) | Determines whether a firm DLL applies at all; blocking for the risk engine |
+| 11 | **Self-imposed daily stop $300** (§10.1) | Keep enabled; the MLL is otherwise the only circuit breaker |
 
 ### Why maximizing prop pass probability is the wrong objective
 

@@ -21,8 +21,8 @@ meta:
   firm: Topstep
   product: Trading Combine
   account_size_usd: 50000
-  config_version: 1.0.0
-  verified_on: 2026-07-31
+  config_version: 1.1.0
+  verified_on: 2026-08-01
   verified_by: automated search research, NOT primary-source fetch
   requires_human_reverification: true
 
@@ -65,22 +65,58 @@ maximum_loss_limit:
 # Rules the owner's description OMITTED. These change sizing materially.
 # ---------------------------------------------------------------------------
 daily_loss_limit:
+  # CORRECTED 2026-08-01 after owner correction. A prior version of this file wrongly
+  # encoded a mandatory 1000 USD DLL as a firm rule. That was wrong.
+  firm_enforced: false
+  enabled: false
+  limit_usd: null
+  verification: CONFIRMED_BY_OWNER_AND_RESEARCH
+  source: https://help.topstep.com/en/articles/10490293-daily-loss-limit-in-the-trading-combine-and-express-funded-account
+  corroborating_source: https://campaignbuzz.io/email/topstep.com/e6313f1e-151e-45b4-a464-4efeac8f8ffb
+  accessed: 2026-08-01
+  evidence_level: moderate
+  note: >
+    Topstep removed the DEFAULT Daily Loss Limit on TopstepX Combines and XFAs
+    effective 2024-08-25. It was replaced by an optional, free "Personal Daily Loss
+    Limit" the trader self-sets in the TopstepX dashboard. The Personal DLL is a
+    self-imposed timeout and does NOT count as a rule violation or fail the Combine.
+    The owner has stated they will not enable it. This resolves the self-contradiction
+    flagged in config version 1.0.0, where one secondary source both asserted removal
+    in 2024 and restated a 1000 USD limit.
+
+  platform_conditional_WARNING: >
+    IMPORTANT AND UNRESOLVED. The DLL removal reportedly applies ONLY to the TopstepX
+    proprietary platform. Secondary sources state that NinjaTrader, Tradovate,
+    Quantower, and TradingView STILL ENFORCE a Daily Loss Limit objective on Combine
+    accounts. If the owner routes orders through any of those platforms rather than
+    TopstepX, a firm-enforced DLL may still apply and this config would be wrong.
+    The execution platform is therefore a blocking question. See SPECIFICATION.md
+    section 22 decision 10.
+
+  consequence_of_no_dll: >
+    With no daily limit, the 2000 USD MLL becomes the ONLY firm loss constraint. There
+    is no circuit breaker between a single bad day and evaluation failure: one session
+    can consume the entire buffer. This makes the engine-level self-imposed daily stop
+    below a risk-engineering recommendation rather than a redundancy.
+
+# ---------------------------------------------------------------------------
+# Engine-level self-imposed daily stop. DESIGN CHOICE, NOT A FIRM RULE.
+# Enforced by this project's own risk engine, independent of Topstep.
+# ---------------------------------------------------------------------------
+self_imposed_daily_stop:
+  classification: DESIGN
   enabled: true
-  limit_usd: 1000
-  measured_from: prior_day_closing_balance
+  limit_usd: 300                        # 3 x R_target
   resets_at: "17:00"
   resets_tz: America/Chicago
-  verification: RESEARCHED_NOT_OWNER_STATED
-  source: https://help.topstep.com/en/articles/10490293-daily-loss-limit-in-the-trading-combine-and-express-funded-account
-  accessed: 2026-07-31
-  evidence_level: moderate
-  risk_note: >
-    CRITICAL. This was absent from the owner's provisional description. At 1000 USD it
-    is HALF the 2000 USD MLL buffer and is therefore the BINDING per-day constraint,
-    not the MLL. All per-trade sizing must be derived from the DLL first and checked
-    against the MLL second. One secondary source claimed Topstep removed the separate
-    daily limit in 2024 and then restated a 1000 USD limit in the same summary. That
-    self-contradiction is unresolved and is a specific item for human verification.
+  owner_decision_required: true
+  rationale: >
+    Not required by Topstep and not a rule violation if breached. Recommended anyway
+    because the usable MLL of 1500 USD absorbs only 15 full stops; a 300 USD daily
+    stop converts that into at least 5 independent bad days rather than allowing one
+    session to end the evaluation. The owner may set this to enabled: false, in which
+    case a single session is permitted to consume the entire usable buffer and the
+    engine will size and halt accordingly.
 
 consistency_rule:
   enabled: true
@@ -201,8 +237,8 @@ safety_margins:
   classification: DESIGN
   mll_reserve_fraction: 0.25            # treat only 75% of the 2000 buffer as usable
   usable_mll_usd: 1500
-  dll_reserve_fraction: 0.20            # treat only 80% of the 1000 DLL as usable
-  usable_dll_usd: 800
+  daily_stop_reserve_fraction: 0.0      # self-imposed stop already sits below the MLL
+  usable_daily_stop_usd: 300
   rationale: >
     Reserves absorb slippage beyond the stop, opening gaps, fees, and the unresolved
     rule semantics above. Trading to the exact published threshold leaves no room for
