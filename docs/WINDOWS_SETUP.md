@@ -220,6 +220,9 @@ Only after Step 6 passed:
 py tools\ibkr_download.py --symbols MES MNQ --bar-size "1 min" --years 2
 ```
 
+- **Expect about 2 to 2.5 hours**, roughly 700 requests. Fewer contracts exist than the
+  offline dry-run predicts, because the dry-run synthesizes a full quarterly cycle while
+  IBKR only serves about 8 months of expired contracts.
 - **Leave the PowerShell window open** and leave Gateway logged in.
 - **It is safe to interrupt.** Press `Ctrl+C`, or let the machine sleep, or lose the
   connection. Every request is cached to its own file. Rerun the exact same command and it
@@ -256,8 +259,12 @@ new-claude-bot\
     └── _cache\        (per-request chunks; safe to delete once merged)
 ```
 
-Roughly 8 quarterly contracts per symbol, each covering its ~100-day front-month window, at
-1-minute resolution, unadjusted. That is what the backtest needs.
+Roughly 4 quarterly contracts per symbol carrying real data, each covering its ~100-day
+front-month window, at 1-minute resolution, unadjusted. That is about 11.5 months of
+continuous coverage per instrument, which is what the backtest needs.
+
+Contracts dated in the future are listed by IBKR but correctly skipped by the planner,
+since they have no history yet.
 
 Send me the output of `validate_data.py` and I will start building the engine.
 
@@ -275,7 +282,7 @@ Send me the output of `validate_data.py` and I will start building the engine.
 | Connects fine, every file `-> 0 bars` | Missing CME market data subscription |
 | `clientId already in use` | TWS or another script is connected. Add `--client-id 42` |
 | `pacing violation` in the log | Add `--pacing 15` |
-| Oldest contracts return 0 bars | Expected. IBKR keeps expired futures about 2 years |
+| Only ~8 contracts found, oldest ~8 months back | Expected and MEASURED. IBKR's contract discovery cuts off well before the documented 2-year retention. About 11.5 months of continuous coverage is normal |
 | Download died overnight | Rerun the same command; it resumes from cache |
 
 > **Note on the code you are running:** the parts that talk to IB Gateway have never been

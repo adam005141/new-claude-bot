@@ -35,7 +35,7 @@ through history in chunks. That single parameter is the difference between "last
 |---|---|---|
 | Bars of 1 minute and larger | Restrictions **lifted** | 1-min history is obtainable |
 | Bars of 30 seconds or less | Limited to roughly the last 6 months | Only matters if you want sub-minute |
-| **Expired futures contracts** | Available up to roughly **2 years past expiration** | This is the key one: it lets you build a proper dated-contract series |
+| **Expired futures contracts** | Documented as ~2 years past expiration. **Measured: ~8 months.** See 2.6 | Still enough for a dated-contract series, but shorter than the docs imply |
 | Request pacing | Enforced ~10 seconds between historical requests, plus a rolling cap | A full pull takes hours, not minutes. Budget for it. |
 | Symbol/barSize/duration combinations | Not all combinations are served | Expect to probe empirically |
 
@@ -65,11 +65,52 @@ not give you queue position or book depth. Plan cost modeling accordingly.
   store as the system of record.
 - Pull `TRADES` and `BID`/`ASK` separately so spread can be estimated.
 
-**Roughly 2 years of 1-minute MES and MNQ dated-contract data, with bid/ask, at zero
-marginal cost.** That is enough to support the walk-forward and lockbox design in the
-specification, though 2 years still spans a limited set of volatility regimes, and the
-specification's regime-coverage requirement should be re-checked against what you actually
-retrieve.
+**Roughly 11.5 months of 1-minute MES and MNQ dated-contract data at zero marginal cost.**
+See 2.6 for why this is less than the documentation promises. It supports a chronological
+train/validation/lockbox split, but not the specification's full regime-coverage
+requirement.
+
+### 2.6 MEASURED retention, which is shorter than documented
+
+Evidence level: `strong` (direct measurement on the owner's account, 2026-08-01).
+
+IBKR documentation states expired futures are available up to two years past expiration.
+**That is not what a real account returns.** A live `reqContractDetails` call with
+`includeExpired=True` against MES on 2026-08-01 returned:
+
+```
+MES: found 8 dated contracts (202512 to 202709)
+```
+
+Only 8 contracts, the oldest expiring 2025-12-19, roughly 7.5 months before the query.
+Five of the eight are current or future contracts carrying no usable history. Contract
+DISCOVERY cuts off well before the documented data-retention window.
+
+Actual continuous coverage obtained:
+
+| Contract | Covers | Hourly bars |
+|---|---|---:|
+| MES 202512 | 2025-08-20 to 2025-12-18 | 1,925 |
+| MES 202603 | 2025-11-19 to 2026-03-19 | 1,894 |
+| MES 202606 | 2026-02-18 to 2026-06-17 | 1,925 |
+| MES 202609 | 2026-06-02 to 2026-07-31 | 981 |
+
+Stitched: **2025-08-20 to 2026-07-31, about 11.5 months.** Consecutive contracts overlap by
+roughly a month, which is the roll period and is exactly what the roll logic needs.
+
+**Consequence for the research plan.** About 240 trading days. Split 50/30/20 gives roughly
+120 development days. At ~2 trades per day that is ~240 development trades per instrument
+across ALL legs, so a three-leg design lands near 80 trades per leg and fails the
+200-trade gate in SPECIFICATION.md section 18.5. This is a direct argument for building one
+or two legs rather than three.
+
+Additionally, Aug 2025 to Jul 2026 is likely a SINGLE volatility regime. The
+specification's walk-forward requirement for materially different regimes cannot be
+satisfied by this dataset, and any conclusion drawn from it must carry that limitation
+permanently rather than treating it as a detail to revisit.
+
+To exceed this ceiling, FirstRate Data carries ~7 years of MNQ 1-minute history for a
+one-off per-symbol fee. That is the cheapest route to genuine regime diversity.
 
 ---
 
