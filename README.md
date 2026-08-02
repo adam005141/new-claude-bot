@@ -3,9 +3,11 @@
 Session-aware, evidence-first research project for Micro E-mini S&P 500 (MES) and Micro
 E-mini Nasdaq-100 (MNQ) intraday futures.
 
-> **Status: SPECIFICATION ONLY.**
-> No strategy code has been written. No backtest has been run. No performance number in
-> this repository has been measured. There is no live order path and none is planned.
+> **Status: Leg B tested on development data. FAILED.**
+> MES shows no detectable edge and fails three predeclared gates. MNQ produced 10-11
+> trades, which is not a sample. Validation and lockbox splits are UNTOUCHED.
+> See [`docs/RESULTS_DEV_2026-08-02.md`](docs/RESULTS_DEV_2026-08-02.md).
+> There is no live order path and none is planned.
 
 ---
 
@@ -13,7 +15,9 @@ E-mini Nasdaq-100 (MNQ) intraday futures.
 
 | Document | Purpose |
 |---|---|
-| [`docs/EVIDENCE_STATUS.md`](docs/EVIDENCE_STATUS.md) | **Start here.** Environment audit and why a credible backtest is not currently possible |
+| [`docs/RESULTS_DEV_2026-08-02.md`](docs/RESULTS_DEV_2026-08-02.md) | **The result.** Leg B development verdict and the gates it failed |
+| [`docs/EXPERIMENT_LEDGER.md`](docs/EXPERIMENT_LEDGER.md) | Every run, including failures, and which splits are spent |
+| [`docs/EVIDENCE_STATUS.md`](docs/EVIDENCE_STATUS.md) | Environment audit and data-acquisition incidents |
 | [`docs/DATA_SOURCING.md`](docs/DATA_SOURCING.md) | How to obtain usable historical data, including free options |
 | [`docs/SPECIFICATION.md`](docs/SPECIFICATION.md) | The 22-section implementation-grade specification |
 | [`config/instruments.yaml`](config/instruments.yaml) | Contract specs, trading hours, roll policy |
