@@ -26,7 +26,7 @@ from .execution import (
 from .risk import RiskEngine, RiskState
 from .sessions import ET, classify_index, is_tradable, SessionCalendar
 from .sizing import size_position
-from .strategy import OpeningRangeBreakout, Rejection, Signal
+from .strategy import OpeningRangeBreakout, Rejection, SessionState, Signal
 
 log = logging.getLogger(__name__)
 
@@ -108,7 +108,7 @@ class Backtester:
 
         position: Position | None = None
         pending: Signal | None = None
-        entries_this_session = 0
+        state = SessionState()
         current_session: date | None = None
         equity_rows: list[dict] = []
 
@@ -125,7 +125,7 @@ class Backtester:
                     result.trades.append(trade)
                 self.risk.start_session(sd)
                 current_session = sd
-                entries_this_session = 0
+                state = SessionState()          # re-entry state never crosses sessions
                 pending = None
 
             bar = Bar(row["open"], row["high"], row["low"], row["close"])
@@ -143,11 +143,13 @@ class Backtester:
                                                   row["timestamp_utc"], reason,
                                                   str(sessions.iloc[i]), raw_price=True)
                     result.trades.append(trade)
+                    state.record_exit(i)
                 elif position.bars_held >= self.params.max_bars_in_trade:
                     position, trade = self._close(position, row["close"], i,
                                                   row["timestamp_utc"], ExitReason.TIME,
                                                   str(sessions.iloc[i]))
                     result.trades.append(trade)
+                    state.record_exit(i)
 
             # ---- 2. risk gate, before entries ---------------------------
             open_pnl = position.open_pnl_usd(row["close"], self.inst) if position else 0.0
@@ -160,6 +162,7 @@ class Backtester:
                                               row["timestamp_utc"], reason,
                                               str(sessions.iloc[i]))
                 result.trades.append(trade)
+                state.record_exit(i)
 
             equity_rows.append({
                 "timestamp_utc": row["timestamp_utc"],
@@ -178,7 +181,7 @@ class Backtester:
             if pending is not None and position is None and decision.can_enter:
                 position = self._open(pending, bar, i, row, result)
                 if position is not None:
-                    entries_this_session += 1
+                    state.record_entry(position.side, position.entry_price)
                 pending = None
             elif pending is not None:
                 pending = None            # stale by one bar; never carried further
@@ -187,7 +190,7 @@ class Backtester:
             if position is None and decision.can_enter and pending is None:
                 if is_tradable(row["timestamp_utc"], self.calendar,
                                self.cfg.enabled_sessions):
-                    out = self.strategy.evaluate(row, entries_this_session)
+                    out = self.strategy.evaluate(row, state, bar_index=i)
                     if isinstance(out, Signal):
                         pending = out
                     elif isinstance(out, Rejection):

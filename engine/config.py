@@ -14,8 +14,6 @@ from datetime import time
 from pathlib import Path
 from typing import Any
 
-import yaml
-
 from .sessions import Session, DEFAULT_ENABLED
 
 
@@ -102,7 +100,13 @@ class StrategyParams:
     max_bars_in_trade: int = 24
     atr_window: int = 14
     rvol_lookback: int = 20
-    max_entries_per_session: int = 1      # ORB does not re-enter by default
+    # Re-entry. A once-daily ORB caps the sample at one trade per session, which on an
+    # 11-month dataset is too few to detect any plausible edge. Re-entry raises the
+    # ceiling, but naively it just re-buys the same failed level, so it is fenced by a
+    # cooldown and a new-extreme requirement rather than by the cap alone.
+    max_entries_per_session: int = 3       # range 1-6
+    reentry_cooldown_bars: int = 3         # bars after an exit before re-arming
+    reentry_new_extreme_atr: float = 0.5   # how far beyond the prior entry to re-enter
     allow_long: bool = True
     allow_short: bool = True
 
@@ -116,6 +120,9 @@ class StrategyParams:
             ("min_stop_ticks", self.min_stop_ticks, 1, 40),
             ("r_target", self.r_target, 0.5, 3.0),
             ("max_bars_in_trade", self.max_bars_in_trade, 1, 200),
+            ("max_entries_per_session", self.max_entries_per_session, 1, 6),
+            ("reentry_cooldown_bars", self.reentry_cooldown_bars, 0, 20),
+            ("reentry_new_extreme_atr", self.reentry_new_extreme_atr, 0.0, 3.0),
         ]
         for name, value, lo, hi in checks:
             if not lo <= value <= hi:
@@ -243,5 +250,13 @@ class EngineConfig:
 
 
 def load_yaml(path: str | Path) -> dict[str, Any]:
+    """
+    Load a YAML config file.
+
+    PyYAML is imported here rather than at module scope so that a missing optional
+    dependency cannot break the entire engine at import time, which is exactly what
+    happened when this module hard-imported it.
+    """
+    import yaml
     with open(path) as fh:
         return yaml.safe_load(fh) or {}

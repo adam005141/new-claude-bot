@@ -519,3 +519,101 @@ def test_resample_never_spans_sessions():
     assert out["session_date"].nunique() == 2
     for _, g in out.groupby("session_date"):
         assert g["contract_month"].nunique() == 1
+
+
+# ---------------------------------------------------------------------------
+# Re-entry guards
+# ---------------------------------------------------------------------------
+
+def _orb_row(close: float, or_high: float = 5807.0, or_low: float = 5793.0,
+             atr_: float = 4.0, rvol: float = 2.0) -> dict:
+    # width 14 against a baseline of atr*sqrt(6)=9.8 gives norm 1.43, inside the 1.5 cap.
+    width = or_high - or_low
+    return {
+        "close": close, "or_high": or_high, "or_low": or_low, "or_width": width,
+        "or_width_norm": width / (atr_ * np.sqrt(6)), "atr": atr_, "rvol": rvol,
+        "or_ready": True, "entries_blocked": False,
+    }
+
+
+def _orb(**overrides):
+    from engine.strategy import OpeningRangeBreakout
+    from engine.config import StrategyParams, RiskParams, COST_ADVERSE, MES
+    return OpeningRangeBreakout(StrategyParams(**overrides), MES, RiskParams(), COST_ADVERSE)
+
+
+def test_first_entry_is_taken():
+    from engine.strategy import SessionState, Signal
+    out = _orb().evaluate(_orb_row(close=5830.0), SessionState(), bar_index=10)
+    assert isinstance(out, Signal) and out.side is Side.LONG
+
+
+def test_reentry_blocked_during_cooldown():
+    """A stop-out followed immediately by another breakout is the whipsaw case."""
+    from engine.strategy import SessionState, Rejection
+    st = SessionState(entries=1, last_exit_bar=10, last_entry_long=5825.0)
+    out = _orb(reentry_cooldown_bars=3).evaluate(_orb_row(close=5850.0), st, bar_index=12)
+    assert isinstance(out, Rejection) and out.reason == "REENTRY_COOLDOWN"
+
+
+def test_reentry_requires_a_new_extreme():
+    """
+    After the cooldown, re-entering at or below the previous entry would be buying the
+    same failed level again and booking it as an independent trade.
+    """
+    from engine.strategy import SessionState, Rejection, Signal
+    st = SessionState(entries=1, last_exit_bar=10, last_entry_long=5825.0)
+    orb = _orb(reentry_cooldown_bars=3, reentry_new_extreme_atr=0.5)
+
+    # atr=4.0, so a new extreme needs +2.0 beyond 5825.
+    too_close = orb.evaluate(_orb_row(close=5826.0), st, bar_index=20)
+    assert isinstance(too_close, Rejection) and too_close.reason == "NO_NEW_EXTREME"
+
+    far_enough = orb.evaluate(_orb_row(close=5828.0), st, bar_index=20)
+    assert isinstance(far_enough, Signal)
+
+
+def test_new_extreme_rule_applies_per_direction():
+    """A long entry must not block a short re-entry; a regime flip is a genuine setup."""
+    from engine.strategy import SessionState, Signal
+    st = SessionState(entries=1, last_exit_bar=10, last_entry_long=5825.0)
+    out = _orb(reentry_cooldown_bars=3).evaluate(_orb_row(close=5770.0), st, bar_index=20)
+    assert isinstance(out, Signal) and out.side is Side.SHORT
+
+
+def test_entry_cap_is_enforced():
+    from engine.strategy import SessionState
+    st = SessionState(entries=3, last_exit_bar=1)
+    assert _orb(max_entries_per_session=3).evaluate(
+        _orb_row(close=5900.0), st, bar_index=50) is None
+
+
+def test_reentry_state_resets_each_session():
+    """Yesterday's entries must not restrict today."""
+    cfg = EngineConfig(symbols=("MES",))
+    feats = compute(_synthetic_market(40), or_minutes=30, atr_window=14,
+                    rvol_lookback=20, bar_minutes=5)
+    trades = Backtester(cfg, "MES").run(feats).trades_frame()
+    if trades.empty:
+        pytest.skip("no trades on this synthetic sample")
+    per_session = trades.groupby("session_date").size()
+    assert per_session.max() <= cfg.strategy.max_entries_per_session
+
+
+def test_reentry_raises_the_trade_ceiling():
+    """The whole point of allowing re-entry: more independent observations."""
+    feats = compute(_synthetic_market(60), or_minutes=30, atr_window=14,
+                    rvol_lookback=20, bar_minutes=5)
+    from dataclasses import replace
+    once = EngineConfig(symbols=("MES",), strategy=StrategyParams(max_entries_per_session=1))
+    many = EngineConfig(symbols=("MES",), strategy=StrategyParams(max_entries_per_session=3))
+    n1 = len(Backtester(once, "MES").run(feats).trades_frame())
+    n3 = len(Backtester(many, "MES").run(feats).trades_frame())
+    assert n3 >= n1
+
+
+def test_reentry_params_are_range_checked():
+    with pytest.raises(ValueError, match="pre-registered range"):
+        StrategyParams(max_entries_per_session=50).validate()
+    with pytest.raises(ValueError, match="pre-registered range"):
+        StrategyParams(reentry_new_extreme_atr=9.0).validate()

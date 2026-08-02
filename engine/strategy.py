@@ -38,6 +38,32 @@ class Rejection:
     reason: str
 
 
+@dataclass
+class SessionState:
+    """
+    Per-session trade state. Reset at every session boundary.
+
+    Exists so re-entry can be fenced properly. Without the last-entry prices, a whipsaw
+    around the opening-range edge would let the strategy buy the same failed breakout
+    repeatedly and book each attempt as an independent trade, which inflates the sample
+    with correlated losses and flatters nothing except the trade count.
+    """
+    entries: int = 0
+    last_exit_bar: int | None = None
+    last_entry_long: float | None = None
+    last_entry_short: float | None = None
+
+    def record_entry(self, side: Side, price: float) -> None:
+        self.entries += 1
+        if side is Side.LONG:
+            self.last_entry_long = price
+        else:
+            self.last_entry_short = price
+
+    def record_exit(self, bar_index: int) -> None:
+        self.last_exit_bar = bar_index
+
+
 class OpeningRangeBreakout:
     """
     Stateless evaluator. All session state arrives in the feature row, so the same object
@@ -53,7 +79,8 @@ class OpeningRangeBreakout:
         self.risk = risk
         self.costs = costs
 
-    def evaluate(self, row, entries_this_session: int) -> Signal | Rejection | None:
+    def evaluate(self, row, state: SessionState,
+                 bar_index: int = 0) -> Signal | Rejection | None:
         """
         Evaluate one COMPLETED bar. Returns a Signal to act on at the next bar, a
         Rejection worth counting, or None when the setup simply is not present.
@@ -62,7 +89,7 @@ class OpeningRangeBreakout:
         was filtered". Collapsing them would make the strategy look more selective than
         it is and would hide how much the filters are actually doing.
         """
-        if entries_this_session >= self.p.max_entries_per_session:
+        if state.entries >= self.p.max_entries_per_session:
             return None
         if not bool(row.get("or_ready", False)):
             return None
@@ -96,6 +123,19 @@ class OpeningRangeBreakout:
         rvol = row.get("rvol")
         if rvol is None or rvol != rvol or rvol < self.p.rvol_breakout:
             return Rejection("RVOL_TOO_LOW")
+
+        # Re-entry guards. Both exist to stop a whipsaw around the range edge being
+        # recorded as a series of independent trades.
+        if state.entries > 0:
+            if state.last_exit_bar is not None:
+                if bar_index - state.last_exit_bar < self.p.reentry_cooldown_bars:
+                    return Rejection("REENTRY_COOLDOWN")
+            prior = state.last_entry_long if side is Side.LONG else state.last_entry_short
+            if prior is not None:
+                needed = self.p.reentry_new_extreme_atr * atr_
+                extended = ((close - prior) if side is Side.LONG else (prior - close))
+                if extended < needed:
+                    return Rejection("NO_NEW_EXTREME")
 
         stop_pts = stop_distance(atr_, self.inst, self.p.m_stop_atr, self.p.min_stop_ticks)
         target_pts = self.p.r_target * or_width

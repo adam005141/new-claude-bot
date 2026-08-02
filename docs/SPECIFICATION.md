@@ -630,7 +630,10 @@ labeled **fragile** and does not proceed, regardless of its base-case statistics
 | `R_target` | 100 | USD | 50–200 | Fixed `DESIGN` |
 | `max_portfolio_heat` | 150 | USD | 100–300 | Fixed `DESIGN` |
 | `corr_threshold` | 0.75 | corr | 0.5–0.95 | Fixed `DESIGN` |
-| `max_entries` | 4 | count/session | 1–10 | Fixed `DESIGN` |
+| `max_entries_per_session` | 3 | count/session | 1–6 | Tunable, raised from 1 for sample size |
+| `reentry_cooldown_bars` | 3 | bars | 0–20 | Fixed `DESIGN` |
+| `reentry_new_extreme_atr` | 0.5 | ATR | 0.0–3.0 | Fixed `DESIGN` |
+| `or_max_width_norm` | 1.5 | ×random-walk baseline | 0.5–4.0 | Tunable (replaces `or_max_width_atr`) |
 | `mu_min` | 0.25 | fraction | 0.1–0.5 | Fixed `DESIGN` |
 | `latency_ms` | 250 | ms | 50–1000 | Fixed `DESIGN` |
 | `flat_time` | 15:50 | ET | — | Fixed `DESIGN` |
@@ -787,11 +790,44 @@ stress · roll-week, holiday, high-volatility, and low-liquidity stress · compa
 section 20 baselines · feature and reference-feed ablation · **backtest-versus-paper
 decision parity on identical replay data**.
 
-### 18.5 Minimum sample
+### 18.5 Minimum sample, and the ceiling that constrains it
 
 `min_trades_per_leg` = **200** on the development set, per instrument per leg (`DESIGN`).
-A leg below this is not evaluated, it is discarded. Per `EVIDENCE_STATUS.md`, this alone
-rules out the data available in this environment by roughly a factor of 20.
+A leg below this is not evaluated, it is discarded.
+
+**The dataset imposes a hard ceiling that interacts with this gate.** With 231 sessions
+obtained (2025-09-10 to 2026-07-31) and a once-per-session entry cap, the maximum possible
+development sample is 115 trades per instrument, at 100% participation. The gate was
+therefore *unreachable by construction*, not merely hard to reach.
+
+Re-entry was enabled in response (`max_entries_per_session` = 3, fenced by
+`reentry_cooldown_bars` and `reentry_new_extreme_atr`, so a whipsaw around the range edge
+cannot be booked as a series of independent trades). This raises the ceiling:
+
+| Entry cap | Ceiling / instrument | Development ceiling |
+|---|---:|---:|
+| 1 (once daily) | 231 | 115 |
+| 3 (current) | 693 | 346 |
+
+**Power, which is the honest framing.** Assuming a per-trade standard deviation of ~1.2R:
+
+| Development n | Minimum detectable edge (95%, two-sided) |
+|---:|---:|
+| 78 | 0.266R |
+| 115 | 0.219R |
+| 346 | 0.126R |
+| 692 (both instruments pooled) | 0.089R |
+
+A plausible post-cost intraday edge is **0.02 to 0.10R**. Even at the re-entry ceiling the
+detection threshold sits above that band, and multiple-testing correction raises it
+further. Pooling MES and MNQ does not fully help, because the two are highly correlated
+and therefore do not contribute independent observations.
+
+**Consequence, stated plainly: this dataset can only detect a LARGE edge.** A small but
+genuine edge is indistinguishable from noise here, and a positive development result is
+more likely to be noise than signal. This is a property of the sample, not of the engine,
+and no amount of care in the code changes it. It is the primary argument for acquiring
+deeper history before drawing any conclusion.
 
 ### 18.6 Warning signs treated as failures, not successes
 
