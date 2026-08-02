@@ -93,8 +93,6 @@ class OpeningRangeBreakout:
             return None
         if not bool(row.get("or_ready", False)):
             return None
-        if bool(row.get("entries_blocked", False)):
-            return Rejection("ROLL_OR_EXPIRY")
 
         or_high, or_low = row.get("or_high"), row.get("or_low")
         or_width, atr_ = row.get("or_width"), row.get("atr")
@@ -104,12 +102,18 @@ class OpeningRangeBreakout:
         if atr_ <= 0 or or_width <= 0:
             return None
 
-        # An already-exhausted range has spent the move the breakout is trying to catch.
-        # Compared against the random-walk baseline so the threshold means the same thing
-        # at every combination of or_minutes and decision timeframe.
-        if width_norm > self.p.or_max_width_norm:
-            return Rejection("OR_TOO_WIDE")
-
+        # DIRECTION FIRST, then filters.
+        #
+        # Ordering matters for the rejection counters, not just for speed. Filters
+        # evaluated before a breakout is detected fire on every eligible bar of the
+        # session, while filters evaluated after fire only on actual setups. Mixing the
+        # two makes the counts incomparable and badly overstates whichever filter happens
+        # to sit earliest. The first real run reported 4,503 OR_TOO_WIDE against 845
+        # RVOL_TOO_LOW for exactly that reason, which reads as "width is the binding
+        # filter" when the two numbers were never measuring the same population.
+        #
+        # Every rejection below now answers one question: of the setups that actually
+        # triggered a breakout, why was each refused?
         buffer_ = self.p.b_buffer_atr * atr_
         close = row["close"]
 
@@ -119,6 +123,15 @@ class OpeningRangeBreakout:
             side = Side.SHORT
         else:
             return None
+
+        if bool(row.get("entries_blocked", False)):
+            return Rejection("ROLL_OR_EXPIRY")
+
+        # An already-exhausted range has spent the move the breakout is trying to catch.
+        # Compared against the random-walk baseline so the threshold means the same thing
+        # at every combination of or_minutes and decision timeframe.
+        if width_norm > self.p.or_max_width_norm:
+            return Rejection("OR_TOO_WIDE")
 
         rvol = row.get("rvol")
         if rvol is None or rvol != rvol or rvol < self.p.rvol_breakout:

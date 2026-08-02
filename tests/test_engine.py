@@ -617,3 +617,26 @@ def test_reentry_params_are_range_checked():
         StrategyParams(max_entries_per_session=50).validate()
     with pytest.raises(ValueError, match="pre-registered range"):
         StrategyParams(reentry_new_extreme_atr=9.0).validate()
+
+
+def test_rejections_are_only_counted_for_actual_breakouts():
+    """
+    Filters must be evaluated AFTER a breakout is detected, so every rejection counter
+    describes the same population: setups that actually triggered. A filter evaluated
+    earlier fires on every eligible bar and swamps the others in the diagnostics.
+    """
+    from engine.strategy import SessionState
+    orb = _orb()
+    # Price sitting inside the range is not a setup, so nothing should be counted at all,
+    # even though the range is deliberately too wide and the contract is blocked.
+    quiet = _orb_row(close=5800.0, or_high=5807.0, or_low=5793.0, atr_=1.0)
+    quiet["entries_blocked"] = True
+    assert orb.evaluate(quiet, SessionState(), bar_index=5) is None
+
+
+def test_wide_range_is_only_reported_when_a_breakout_triggers():
+    from engine.strategy import SessionState, Rejection
+    orb = _orb()
+    wide = _orb_row(close=5900.0, or_high=5850.0, or_low=5750.0, atr_=4.0)
+    out = orb.evaluate(wide, SessionState(), bar_index=5)
+    assert isinstance(out, Rejection) and out.reason == "OR_TOO_WIDE"
