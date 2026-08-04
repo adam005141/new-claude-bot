@@ -216,6 +216,34 @@ per-trade risk budget spent entirely on crossing the spread before the trade doe
 Combined with the 558 `SIZE_ZERO_STOP_TOO_WIDE` rejections already noted, MNQ is a
 materially harder instrument to trade profitably at this account size than MES.
 
+### Backtest re-run on measured costs: verdict CONFIRMED
+
+Run: `--measured-costs config/measured_costs.json --cost-session RTH_OPEN`
+
+MES charged $4.95/contract round trip, identical to the assumed adverse prior. Every
+statistic is therefore unchanged:
+
+| Metric | Assumed | Measured |
+|---|---:|---:|
+| Round trip / contract | $4.95 | $4.95 |
+| Trades | 72 | 72 |
+| Expectancy | $3.60 | $3.60 |
+| Net | $259.48 | $259.48 |
+| Profit factor | 1.07 | 1.07 |
+| Excluding top 1 day | -$55.05 | -$55.05 |
+
+**The cost question is now closed.** It was the one open item capable of changing the
+verdict, and measurement confirmed rather than overturned it. MES fails concentration,
+fragility, and significance on measured costs.
+
+**A note on where the session mechanism mattered.** It did no work for MES, whose spread is
+flat everywhere. For MNQ it did: the blended p75 of 3 ticks is inflated by London and
+overnight sessions, while the RTH_OPEN p75 where Leg B actually fires is 2 ticks. Charging
+the blended figure would have overstated MNQ cost by 27% ($4.70 versus $3.70). So
+attributing cost to the traded session was the right design; the specific prediction about
+WHICH session is widest was wrong in both direction and instrument. MNQ is widest in
+London and the EU/NY overlap, not at the New York open.
+
 ### What this does not resolve
 
 Quoted spread remains a **lower bound**. Queue position, partial fills, and widening in the

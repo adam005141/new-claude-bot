@@ -15,10 +15,16 @@ easiest way to make a search look more disciplined than it was.
 | 4 | 2026-08-02 | dev | MNQ | B (ORB) | defaults, severe | 10 | +41.45 | **NO EVIDENCE**, improved under worse costs |
 | 5 | 2026-08-02 | dev | MES | B (ORB) | defaults, base | 72 | +4.83 | **FAILED**, same gates |
 | 6 | 2026-08-02 | dev | MNQ | B (ORB) | defaults, base | 11 | +31.80 | **NO EVIDENCE**, n too small |
+| 7 | 2026-08-02 | dev | MES | B (ORB) | defaults, adverse, **MEASURED** costs | 72 | +3.60 | **FAILED**, identical to run 1; verdict confirmed on measured costs |
+| 8 | 2026-08-02 | dev | MNQ | B (ORB) | defaults, adverse, **MEASURED** costs | 10 | +41.55 | **NO EVIDENCE**, n too small |
 
-**Distinct configurations tried: 1.** Runs 1 to 6 are the same frozen parameter set
-evaluated under three predeclared cost scenarios, which is a robustness check rather than a
-search. No parameter has been tuned against a result.
+**Distinct configurations tried: 1.** Runs 1 to 8 are the same frozen parameter set
+evaluated under three predeclared cost scenarios plus a measured-cost re-run, which is
+robustness checking rather than a search. No parameter has been tuned against a result.
+
+**Leg B on this dataset is CLOSED.** The cost question was the last open item capable of
+changing the verdict; measurement confirmed it. Any further work requires either deeper
+history with these rules frozen beforehand, or a different leg registered here first.
 
 **Splits consumed:**
 
@@ -57,5 +63,7 @@ the cheaper instrument in dollars per contract.
 - Runs 1-6 used engine 0.1.0 at commit `0670cb2`.
 - Rejection counters from runs before `0670cb2` are not comparable across reasons; filters
   were evaluated at different points in the chain. Trade results are unaffected.
-- Costs in all runs are **assumed**, not measured. No BID/ASK data exists yet, so the
-  fragility gate can be demonstrated but not properly evaluated.
+- Runs 1-6 used **assumed** costs. Runs 7-8 used **measured** spreads from 348,857 MES and
+  348,741 MNQ quote-bars. The MES adverse prior matched measurement exactly, so the verdict
+  is unchanged and the fragility gate is now properly evaluated rather than merely
+  demonstrated.
