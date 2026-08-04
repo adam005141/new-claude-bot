@@ -159,6 +159,71 @@ an unmeasured spread assumption has no demonstrated mechanism behind it.
 
 ---
 
+## Measured costs, 2026-08-02 (added after BID/ASK download)
+
+348,857 MES and 348,741 MNQ quote-bars measured. Crossed, zero, and stale quotes were
+0.01% and 0.04% respectively, so the distributions are clean.
+
+### Two predictions I made that the data falsified
+
+**1. "The opening hour quotes wider than midday."** WRONG. Measured ratio is **1.00x** for
+both instruments. Spread is essentially flat across every session window for MES, and for
+MNQ the RTH windows are actually the TIGHTEST (2 ticks) while London and the EU/NY overlap
+are widest (3 ticks). The reasoning was plausible and the data does not support it. The
+`--cost-session` mechanism is retained because it is correct in principle and cost-free
+when the ratio is 1.0, but for this dataset it changes nothing.
+
+**2. "MNQ may be the more cost-efficient instrument."** WRONG in the units that matter.
+That claim assumed both instruments quote near 1 tick. Measured:
+
+| | MES | MNQ |
+|---|---:|---:|
+| Median spread | 1.0 tick | 2.0 ticks |
+| 75th percentile | 1.0 tick | 3.0 ticks |
+| 95th percentile | 2.0 ticks | 6.0 ticks |
+| 99th percentile | 3.0 ticks | **19.0 ticks** |
+| Share at 1 tick | 84.9% | **11.6%** |
+
+MNQ quotes 2 to 3 times wider than MES in ticks. In dollars per contract at the 75th
+percentile, MNQ round-trips at $3.00 of spread against MES at $2.50, so **MNQ is the more
+expensive instrument**, not the cheaper one. The original claim survives only when
+normalised by index level (MNQ 0.0036% vs MES 0.0043%), and the $2,000 loss buffer is
+denominated in dollars, not in percent of index.
+
+### Measured versus assumed round-trip cost per contract
+
+| Scenario | Assumed | Measured | Change |
+|---|---:|---:|---:|
+| MES base | $3.70 | $4.33 | +17% |
+| MES adverse | $4.95 | $4.95 | 0% |
+| MES severe | $7.45 | $8.70 | +17% |
+| MNQ base | $2.20 | $3.45 | +57% |
+| MNQ adverse | $2.70 | $4.70 | +74% |
+| MNQ severe | $3.70 | $8.20 | +122% |
+
+**The MES cost model was right.** The adverse scenario, which is the default and the one
+the verdict rests on, matches the measurement exactly. The MES conclusion in this document
+therefore stands unchanged and is now resting on measured rather than assumed costs.
+
+**The MNQ cost model was materially wrong**, understating cost by 57% to 122%. MNQ produced
+only 10 to 11 trades so no conclusion depended on it, but any future MNQ work must use the
+measured figures.
+
+### MNQ tail risk
+
+MNQ's 99th-percentile spread is 19 ticks, a $19.00 round trip. That is 19% of the $100
+per-trade risk budget spent entirely on crossing the spread before the trade does anything.
+Combined with the 558 `SIZE_ZERO_STOP_TOO_WIDE` rejections already noted, MNQ is a
+materially harder instrument to trade profitably at this account size than MES.
+
+### What this does not resolve
+
+Quoted spread remains a **lower bound**. Queue position, partial fills, and widening in the
+instant an order arrives are not observable in bar data. Real execution cost is at least
+these figures and usually worse.
+
+---
+
 ## Options
 
 1. **Stop.** Leg B on 11 months of data shows nothing. This is a legitimate and complete

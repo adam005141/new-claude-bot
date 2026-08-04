@@ -41,6 +41,17 @@ search. No parameter has been tuned against a result.
 5. The lockbox is opened once, ever, after the rules and code are frozen. Every prior look
    invalidates it.
 
+## Cost model
+
+| Date | Change |
+|---|---|
+| 2026-08-02 | Costs were ASSUMED priors for runs 1-6. |
+| 2026-08-02 | BID/ASK downloaded (348,857 MES and 348,741 MNQ quote-bars). Cost scenarios replaced with measured percentiles. MES adverse matched the prior exactly; MNQ was understated by 57-122%. |
+
+Two predictions falsified by the measurement, recorded so the error rate is visible:
+the opening hour is NOT wider than midday (1.00x for both instruments), and MNQ is NOT
+the cheaper instrument in dollars per contract.
+
 ## Notes
 
 - Runs 1-6 used engine 0.1.0 at commit `0670cb2`.
