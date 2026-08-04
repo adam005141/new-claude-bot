@@ -89,7 +89,7 @@ class Backtester:
         self.symbol = symbol
         self.inst = config.instrument(symbol)
         self.params = config.strategy_for(symbol)
-        self.costs = config.costs
+        self.costs = config.costs_for(symbol)
         self.calendar = calendar or SessionCalendar()
         self.strategy = OpeningRangeBreakout(self.params, self.inst, config.risk, self.costs)
         self.risk = RiskEngine(rules=config.prop, risk=config.risk)

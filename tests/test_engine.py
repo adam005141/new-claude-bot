@@ -640,3 +640,89 @@ def test_wide_range_is_only_reported_when_a_breakout_triggers():
     wide = _orb_row(close=5900.0, or_high=5850.0, or_low=5750.0, atr_=4.0)
     out = orb.evaluate(wide, SessionState(), bar_index=5)
     assert isinstance(out, Rejection) and out.reason == "OR_TOO_WIDE"
+
+
+# ---------------------------------------------------------------------------
+# Measured cost model
+# ---------------------------------------------------------------------------
+
+def _measured_file(tmp_path, open_median=2.0, mid_median=1.0):
+    """Quote stats with a deliberately wider opening hour, as real markets show."""
+    import json
+    doc = {"instruments": {"MES": {
+        "tick_size": 0.25, "tick_value_usd": 1.25, "point_value_usd": 5.0,
+        "overall": {"median_ticks": 1.0, "p75_ticks": 1.0, "p95_ticks": 2.0},
+        "by_session": {
+            "RTH_OPEN": {"median_ticks": open_median, "p75_ticks": open_median,
+                         "p95_ticks": open_median * 2},
+            "RTH_MIDDAY": {"median_ticks": mid_median, "p75_ticks": mid_median,
+                           "p95_ticks": mid_median},
+        }}}}
+    path = tmp_path / "measured.json"
+    path.write_text(json.dumps(doc))
+    return path
+
+
+def test_measured_costs_replace_assumptions(tmp_path):
+    from engine.config import measured_cost_models
+    models = measured_cost_models(_measured_file(tmp_path), "MES")
+    assert all(m.measured for m in models.values())
+    assert models["base"].spread_ticks_per_side == 1.0
+    assert models["severe"].spread_ticks_per_side == 2.0
+
+
+def test_measured_costs_keep_a_slippage_allowance(tmp_path):
+    """
+    Quoted spread is a lower bound. Setting slippage to zero would assert that a market
+    order transacts exactly at the quote, which is false.
+    """
+    from engine.config import measured_cost_models
+    for m in measured_cost_models(_measured_file(tmp_path), "MES").values():
+        assert m.slippage_ticks_per_side > 0
+
+
+def test_session_costs_are_charged_where_the_strategy_trades(tmp_path):
+    """
+    Leg B fires in the opening hour. Charging it the all-day median would understate the
+    cost of precisely the trades it takes.
+    """
+    from engine.config import measured_cost_models
+    path = _measured_file(tmp_path, open_median=2.0, mid_median=1.0)
+    allday = measured_cost_models(path, "MES")["base"]
+    at_open = measured_cost_models(path, "MES", session="RTH_OPEN")["base"]
+    assert at_open.spread_ticks_per_side == 2.0
+    assert at_open.spread_ticks_per_side > allday.spread_ticks_per_side
+    assert at_open.round_trip_usd(MES) > allday.round_trip_usd(MES)
+
+
+def test_missing_symbol_raises_rather_than_silently_using_priors(tmp_path):
+    """A run that believes it used measured costs but quietly used guesses is worse."""
+    from engine.config import measured_cost_models
+    with pytest.raises(KeyError, match="not present"):
+        measured_cost_models(_measured_file(tmp_path), "MNQ")
+
+
+def test_missing_session_raises(tmp_path):
+    from engine.config import measured_cost_models
+    with pytest.raises(KeyError, match="not measured"):
+        measured_cost_models(_measured_file(tmp_path), "MES", session="ASIA")
+
+
+def test_engine_uses_per_symbol_measured_costs(tmp_path):
+    import json
+    doc = json.loads(_measured_file(tmp_path).read_text())
+    doc["instruments"]["MNQ"] = {
+        "tick_size": 0.25, "tick_value_usd": 0.50, "point_value_usd": 2.0,
+        "overall": {"median_ticks": 1.0, "p75_ticks": 2.0, "p95_ticks": 4.0}}
+    path = tmp_path / "both.json"
+    path.write_text(json.dumps(doc))
+
+    cfg = EngineConfig(symbols=("MES", "MNQ"), measured_costs_path=str(path))
+    mes, mnq = cfg.costs_for("MES"), cfg.costs_for("MNQ")
+    assert mes.spread_ticks_per_side == 1.0
+    assert mnq.spread_ticks_per_side == 2.0, "each instrument gets its own measured spread"
+
+
+def test_assumed_costs_used_when_no_measured_file():
+    cfg = EngineConfig(symbols=("MES",))
+    assert not cfg.costs_for("MES").measured

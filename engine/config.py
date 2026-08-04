@@ -73,6 +73,67 @@ class CostModel:
         return self.round_trip_usd(inst) / inst.point_value
 
 
+def measured_cost_models(path: str | Path, symbol: str,
+                         commission_per_side: float = 0.60,
+                         session: str | None = None) -> dict[str, "CostModel"]:
+    """
+    Build cost scenarios from MEASURED quoted spreads instead of priors.
+
+    The three scenarios become percentiles of the observed per-minute spread
+    distribution rather than round numbers someone chose:
+
+        base     median   typical conditions
+        adverse  p75      the worse half of minutes
+        severe   p95      stressed conditions
+
+    Slippage stays as an explicit ADDITIONAL allowance on top of the quoted spread,
+    because quoted spread is a lower bound: it cannot see queue position, partial
+    fills, or the widening that happens as an order arrives. Setting it to zero would
+    assert that a market order transacts exactly at the quote, which is false.
+
+    Raises if the file does not describe the requested symbol, rather than silently
+    falling back to the assumed model. A run that believes it used measured costs but
+    quietly used priors is worse than one that fails.
+    """
+    import json
+    data = json.loads(Path(path).read_text())
+    instruments = data.get("instruments", {})
+    if symbol not in instruments:
+        raise KeyError(
+            f"{symbol} not present in {path}. Measured symbols: {sorted(instruments)}. "
+            "Run tools/measure_costs.py for this symbol before using measured costs."
+        )
+    stats = instruments[symbol]["overall"]
+    if session:
+        # Spread is not constant through the day. A strategy that only fires in the
+        # opening hour pays the OPENING spread; charging it the all-day median would
+        # understate the cost of precisely the trades it takes. Measured data shows the
+        # opening hour running materially wider than midday, so this is not a rounding
+        # difference, it is the difference between one tick and two.
+        by_session = instruments[symbol].get("by_session", {})
+        found = None
+        for key in (session, f"Session.{session}"):
+            if key in by_session:
+                found = by_session[key]
+                break
+        if found is None:
+            raise KeyError(
+                f"session {session!r} not measured for {symbol}. "
+                f"Available: {sorted(by_session)}. Re-run tools/measure_costs.py "
+                "with --by-session, or omit the session to use all-day figures."
+            )
+        stats = found
+    overall = stats
+    return {
+        "base": CostModel("base(measured)", commission_per_side,
+                          overall["median_ticks"], 0.25, measured=True),
+        "adverse": CostModel("adverse(measured)", commission_per_side,
+                             overall["p75_ticks"], 0.50, measured=True),
+        "severe": CostModel("severe(measured)", commission_per_side,
+                            overall["p95_ticks"], 1.00, measured=True),
+    }
+
+
 COST_BASE = CostModel("base", 0.60, 1.0, 0.0)
 COST_ADVERSE = CostModel("adverse", 0.60, 1.0, 0.5)
 COST_SEVERE = CostModel("severe", 0.60, 1.5, 1.0)
@@ -201,6 +262,8 @@ class EngineConfig:
     prop: PropRules = field(default_factory=PropRules)
     execution: ExecutionParams = field(default_factory=ExecutionParams)
     cost_scenario: str = "adverse"        # adverse is the default, not base
+    measured_costs_path: str | None = None   # when set, spreads come from real quotes
+    measured_costs_session: str | None = None  # charge one session's spread, not all-day
     roll_stop_entries_days: int = 5
     seed: int = 7
 
@@ -219,7 +282,21 @@ class EngineConfig:
 
     @property
     def costs(self) -> CostModel:
+        """Assumed costs. Per-symbol measured costs come from `costs_for`."""
         return COST_SCENARIOS[self.cost_scenario]
+
+    def costs_for(self, symbol: str) -> CostModel:
+        """
+        Costs for one instrument, measured when a quote file is configured.
+
+        Measured spreads are per instrument: MES and MNQ do not quote the same width,
+        and applying one blended figure to both would flatter whichever is wider.
+        """
+        if self.measured_costs_path is None:
+            return self.costs
+        return measured_cost_models(
+            self.measured_costs_path, symbol,
+            session=self.measured_costs_session)[self.cost_scenario]
 
     def instrument(self, symbol: str) -> Instrument:
         return INSTRUMENTS[symbol]

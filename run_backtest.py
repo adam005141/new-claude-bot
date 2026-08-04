@@ -66,6 +66,13 @@ def main(argv=None) -> int:
     ap.add_argument("--cost-scenario", choices=["base", "adverse", "severe"], default="adverse")
     ap.add_argument("--decision-minutes", type=int, default=5)
     ap.add_argument("--or-minutes", type=int, default=30)
+    ap.add_argument("--measured-costs", type=Path,
+                    help="JSON from tools/measure_costs.py. Replaces assumed spreads "
+                         "with measured percentiles of the real quoted spread.")
+    ap.add_argument("--cost-session", default="RTH_OPEN",
+                    help="Charge this session's measured spread rather than the all-day "
+                         "figure. Leg B fires in the opening hour, which quotes wider "
+                         "than midday. Pass ALL to use the blended number.")
     ap.add_argument("--no-prop", action="store_true",
                     help="Personal mode: no prop rule layer")
     ap.add_argument("--report", type=Path, help="Directory for CSV/JSON artefacts")
@@ -88,13 +95,26 @@ def main(argv=None) -> int:
         decision_bar_minutes=args.decision_minutes,
         strategy=StrategyParams(or_minutes=args.or_minutes),
         cost_scenario=args.cost_scenario,
+        measured_costs_path=str(args.measured_costs) if args.measured_costs else None,
+        measured_costs_session=(None if args.cost_session.upper() == "ALL"
+                                else args.cost_session),
     )
     if args.no_prop:
         from dataclasses import replace
         cfg.prop = replace(cfg.prop, enabled=False)
 
-    print(f"engine {__version__} | split={args.split} | costs={args.cost_scenario} | "
-          f"prop={'off' if args.no_prop else 'on'}\n")
+    cost_source = "MEASURED" if args.measured_costs else "ASSUMED"
+    print(f"engine {__version__} | split={args.split} | "
+          f"costs={args.cost_scenario} ({cost_source}) | "
+          f"prop={'off' if args.no_prop else 'on'}")
+    if args.measured_costs:
+        for sym in args.symbols:
+            c = cfg.costs_for(sym)
+            print(f"  {sym} [{args.cost_session}]: "
+                  f"spread {c.spread_ticks_per_side:.2f} ticks/side "
+                  f"+ {c.slippage_ticks_per_side:.2f} slippage, "
+                  f"round trip ${c.round_trip_usd(cfg.instrument(sym)):.2f}/contract")
+    print()
 
     all_trades, summaries = [], {}
 
@@ -168,8 +188,15 @@ def main(argv=None) -> int:
                         "results": summaries}, indent=2, default=str))
         print(f"artefacts written to {out}")
 
-    print("\nNOTE: costs are ASSUMED, not measured. No BID/ASK data was downloaded, so "
-          "spread and slippage are priors.\nEvery number above inherits that uncertainty.")
+    if args.measured_costs:
+        print("\nNOTE: spreads are MEASURED from real BID/ASK quotes, but quoted spread is "
+              "a LOWER BOUND\non execution cost: queue position, partial fills, and "
+              "widening on order arrival are\nnot observable in bar data. True cost is at "
+              "least this, and usually worse.")
+    else:
+        print("\nNOTE: costs are ASSUMED, not measured. Run tools/measure_costs.py and pass "
+              "--measured-costs\nto replace the priors. Every number above inherits that "
+              "uncertainty.")
     return 0
 
 
