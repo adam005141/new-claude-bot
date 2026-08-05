@@ -151,6 +151,46 @@ py run_backtest.py --data data --split dev --measured-costs config\measured_cost
 
 ---
 
+## 4a. If you downloaded ES instead of MES
+
+Barchart's contract picker makes this easy to do: `ESH24` and `MESH24` sit next to each
+other. The importer labels ES data as ES, so nothing is silently mixed up, but the
+question of whether ES can substitute for MES has to be answered before using it.
+
+**Do not assume either way.** SPECIFICATION.md section 3 forbids transferring parent
+levels to micro execution, but that rule was written as a precaution rather than a
+measurement. Since the IBKR MES data overlaps the Barchart ES data, the assumption can be
+tested directly:
+
+```powershell
+py tools\compare_es_mes.py --data data
+```
+
+It reports three things, in increasing order of importance:
+
+1. **Price basis**, ES minus MES, in ticks.
+2. **Opening-range level differences**, computed independently on each.
+3. **Whether Leg B's entry trigger fires identically on both.** This is the decisive one.
+   Feature levels agreeing on average is not the question; whether the strategy would have
+   taken the same trades is.
+
+Verdict thresholds, fixed in advance so the answer is not chosen after seeing it:
+
+| Trigger disagreement | Verdict |
+|---|---|
+| ≤ 2% | ES is an acceptable proxy for signal research |
+| 2% to 10% | Marginal: exploratory only, re-run the verdict on MES |
+| > 10% | Not acceptable, re-download as MES |
+
+Leg B's edge is a few ticks wide. A disagreement rate above 10% would mean the ES
+backtest is testing a materially different strategy from the one you would trade.
+
+**Regardless of the outcome, costs, fills, and sizing come from MES.** ES quotes a
+different book with different depth, and `config/measured_costs.json` is already built
+from MES quotes.
+
+---
+
 ## 5. The discipline that makes this worth doing
 
 **Freeze the rules before you look at the new data.**

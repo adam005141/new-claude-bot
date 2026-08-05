@@ -547,3 +547,41 @@ def test_import_errors_only_when_nothing_is_usable(tmp_path):
     src = tmp_path / "Downloads"; src.mkdir()
     _junk_csv(src, "bank_statement.csv", "Date,Description,Amount\n2024-01-01,X,-1\n")
     assert cmd_import(src, tmp_path / "out", None, None, "1min") == 1
+
+
+def test_latest_column_is_recognised_as_close(tmp_path):
+    """
+    Barchart's intraday historical download names the close column "Latest", not "Last".
+    The first real download of 124 files was rejected entirely because of this.
+    """
+    from tools.import_barchart import read_csv
+    src = tmp_path / "esh24_intraday-1min.csv"
+    pd.DataFrame({
+        "timestamp": ["01/02/2024 09:30", "01/02/2024 09:31"],
+        "open": [4750.0, 4751.0], "high": [4751.0, 4752.0], "low": [4749.0, 4750.0],
+        "latest": [4750.5, 4751.5], "change": [0.25, 0.25], "%change": ["0.01%", "0.01%"],
+        "volume": [1000, 1200],
+    }).to_csv(src, index=False)
+
+    df = read_csv(src)
+    assert "close" in df.columns
+    assert df["close"].tolist() == [4750.5, 4751.5]
+
+
+def test_all_close_column_spellings_map(tmp_path):
+    from tools.import_barchart import read_csv
+    for spelling in ("Close", "Last", "Latest", "Settle"):
+        src = tmp_path / f"esh24_{spelling}.csv"
+        pd.DataFrame({
+            "Time": ["01/02/2024 09:30"], "Open": [4750.0], "High": [4751.0],
+            "Low": [4749.0], spelling: [4750.5], "Volume": [1000],
+        }).to_csv(src, index=False)
+        assert read_csv(src)["close"].iloc[0] == 4750.5, f"{spelling} not mapped"
+
+
+def test_es_symbols_parse_to_the_es_root():
+    """The importer must label ES data as ES, not silently treat it as MES."""
+    from tools.import_barchart import parse_symbol
+    assert parse_symbol("ESH24") == ("ES", "202403")
+    assert parse_symbol("ESU23") == ("ES", "202309")
+    assert parse_symbol("MESH24") == ("MES", "202403")

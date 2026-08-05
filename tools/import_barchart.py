@@ -59,13 +59,19 @@ MONTH_CODES = {"F": 1, "G": 2, "H": 3, "J": 4, "K": 5, "M": 6,
 CANDIDATE_TZ = ["America/New_York", "America/Chicago", "UTC",
                 "America/Denver", "America/Los_Angeles"]
 
+# Barchart's close column is named inconsistently across export types: "Last" on some,
+# "Latest" on the intraday historical download, "Close" elsewhere. Map them all.
 COLUMN_ALIASES = {
     "time": "timestamp", "date time": "timestamp", "datetime": "timestamp",
     "date": "timestamp", "timestamp": "timestamp",
     "open": "open", "high": "high", "low": "low",
-    "close": "close", "last": "close", "settle": "close",
+    "close": "close", "last": "close", "latest": "close",
+    "last price": "close", "settle": "close", "settlement": "close",
     "volume": "volume", "vol": "volume",
 }
+
+# Columns Barchart adds that we deliberately ignore rather than treat as a failure.
+IGNORED_COLUMNS = {"change", "%change", "pct change", "open interest", "symbol"}
 
 
 def parse_symbol(symbol: str) -> tuple[str, str]:
