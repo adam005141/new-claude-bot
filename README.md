@@ -23,6 +23,7 @@ E-mini Nasdaq-100 (MNQ) intraday futures.
 | [`config/instruments.yaml`](config/instruments.yaml) | Contract specs, trading hours, roll policy |
 | [`config/topstep_50k_combine.v1.yaml`](config/topstep_50k_combine.v1.yaml) | Versioned prop rule config with sources, dates, and unresolved semantics |
 | [`docs/WINDOWS_SETUP.md`](docs/WINDOWS_SETUP.md) | **Windows walkthrough**: install to downloaded data, step by step |
+| [`docs/BARCHART_IMPORT.md`](docs/BARCHART_IMPORT.md) | Deeper history from Barchart, and the timezone trap it avoids |
 | [`tools/`](tools/) | Data acquisition: IBKR downloader and ingest validator |
 
 ## Getting data

@@ -12,6 +12,7 @@ import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 import pytest
 
@@ -383,3 +384,120 @@ def test_hourly_bars_do_not_false_positive_on_completeness():
     rep = validate_frame(pd.concat(frames, ignore_index=True))
     assert not any(f.gate == "session_completeness" and f.severity == "error"
                    for f in rep.findings)
+
+
+# ---------------------------------------------------------------------------
+# Barchart import
+# ---------------------------------------------------------------------------
+
+def _barchart_csv(tmp_path, tz_name: str, name: str, days: int = 12) -> Path:
+    """A Barchart-style export with a realistic 09:30 ET volume spike, written in tz."""
+    import numpy as np
+    from zoneinfo import ZoneInfo
+    et = ZoneInfo("America/New_York")
+    rng = np.random.default_rng(3)
+    rows, d, made = [], pd.Timestamp("2024-01-02"), 0
+    while made < days:
+        if d.weekday() < 5:
+            start = pd.Timestamp(f"{(d - pd.Timedelta(days=1)).date()} 18:00", tz=et)
+            ts = pd.date_range(start, periods=1380, freq="1min", tz=et)
+            mod = ts.hour * 60 + ts.minute
+            vol = np.where((mod >= 570) & (mod < 575), 9000,
+                  np.where((mod >= 570) & (mod < 960), 1200, 150)).astype(float)
+            px = 4750 + np.cumsum(rng.normal(0, 0.5, len(ts)))
+            local = ts.tz_convert(ZoneInfo(tz_name)).tz_localize(None)
+            rows.append(pd.DataFrame({
+                "Time": local.strftime("%m/%d/%Y %H:%M"),
+                "Open": px.round(2), "High": (px + .5).round(2),
+                "Low": (px - .5).round(2), "Last": px.round(2),
+                "Volume": vol.astype(int)}))
+            made += 1
+        d += pd.Timedelta(days=1)
+    path = tmp_path / name
+    with open(path, "w", newline="") as fh:
+        pd.concat(rows, ignore_index=True).to_csv(fh, index=False)
+        fh.write("Downloaded from Barchart.com as of 08/02/2026\n")
+    return path
+
+
+def test_barchart_symbol_parsing():
+    from tools.import_barchart import parse_symbol
+    assert parse_symbol("MESM26") == ("MES", "202606")
+    assert parse_symbol("MNQZ25") == ("MNQ", "202512")
+    assert parse_symbol("ESH24") == ("ES", "202403")
+    with pytest.raises(ValueError, match="cannot parse"):
+        parse_symbol("NOTASYMBOL")
+
+
+def test_barchart_reader_strips_the_provenance_footer(tmp_path):
+    from tools.import_barchart import read_csv
+    df = read_csv(_barchart_csv(tmp_path, "America/New_York", "MESH24.csv", days=2))
+    assert len(df) == 2 * 1380
+    assert {"timestamp", "open", "high", "low", "close", "volume"} <= set(df.columns)
+    assert df["close"].notna().all()
+
+
+def test_timezone_is_inferred_from_the_opening_volume_spike(tmp_path):
+    """
+    The CSV carries no timezone marker. Reading a Central export as Eastern shifts every
+    bar by an hour, builds the opening range from 08:30 data, and still produces a
+    plausible-looking backtest. Inference exists so that cannot happen silently.
+    """
+    from tools.import_barchart import infer_timezone, read_csv
+    for tz in ("America/New_York", "America/Chicago"):
+        df = read_csv(_barchart_csv(tmp_path, tz, f"MESH24_{tz[-5:]}.csv"))
+        best, scores = infer_timezone(df)
+        assert best == tz, f"inferred {best}, expected {tz}"
+        assert scores[tz] > 5.0, "the correct timezone should win decisively"
+
+
+def test_inference_refuses_without_volume(tmp_path):
+    from tools.import_barchart import infer_timezone, read_csv
+    df = read_csv(_barchart_csv(tmp_path, "America/New_York", "MESH24.csv", days=2))
+    df["volume"] = np.nan
+    with pytest.raises(ValueError, match="cannot infer timezone without volume"):
+        infer_timezone(df)
+
+
+def test_mismatched_timezone_across_files_aborts(tmp_path):
+    """
+    A relative test, not an absolute one. A one-hour shift still lands the "09:30" window
+    inside elevated RTH volume and scores ~2.5x, which passes any fixed threshold. What
+    exposes it is another timezone scoring far better on the same file.
+    """
+    from tools.import_barchart import cmd_import
+    src = tmp_path / "src"; src.mkdir()
+    _barchart_csv(src, "America/New_York", "MESH24.csv")
+    _barchart_csv(src, "America/Chicago", "MESM24.csv")
+    assert cmd_import(src, tmp_path / "out", None, None, "1min") == 2
+
+
+def test_consistent_timezone_imports_and_round_trips(tmp_path):
+    """After import, the volume spike must still land at 09:30 Eastern."""
+    from tools.import_barchart import cmd_import
+    from zoneinfo import ZoneInfo
+    src = tmp_path / "src"; src.mkdir()
+    _barchart_csv(src, "America/Chicago", "MESH24.csv")
+    out = tmp_path / "out"
+    assert cmd_import(src, out, None, None, "1min") == 0
+
+    written = out / "MES" / "MES_202403_1min_TRADES.parquet"
+    assert written.exists()
+    df = pd.read_parquet(written)
+    et = pd.DatetimeIndex(df["timestamp_utc"]).tz_convert(ZoneInfo("America/New_York"))
+    peak = df.assign(m=et.strftime("%H:%M")).groupby("m")["volume"].sum().idxmax()
+    assert peak.startswith("09:3"), f"spike landed at {peak}, not the 09:30 ET open"
+
+
+def test_import_records_timezone_provenance(tmp_path):
+    """How the timezone was determined must be recorded, not just what it was."""
+    import json
+    from tools.import_barchart import cmd_import
+    src = tmp_path / "src"; src.mkdir()
+    _barchart_csv(src, "America/Chicago", "MESH24.csv")
+    out = tmp_path / "out"
+    cmd_import(src, out, None, None, "1min")
+    meta = json.loads((out / "MES" / "MES_202403_1min_TRADES.meta.json").read_text())
+    assert meta["source_timezone"] == "America/Chicago"
+    assert "inferred" in meta["timezone_determination"]
+    assert meta["adjustment"] == "unadjusted"
