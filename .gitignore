@@ -6,3 +6,6 @@ __pycache__/
 .pytest_cache/
 .venv/
 out/
+
+# Raw vendor CSVs; the parquet output under data/ is the artefact.
+downloads/*.csv
