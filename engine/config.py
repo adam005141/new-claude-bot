@@ -143,11 +143,26 @@ COST_SCENARIOS: dict[str, CostModel] = {c.name: c for c in (COST_BASE, COST_ADVE
 @dataclass(frozen=True)
 class StrategyParams:
     """
-    Leg B, opening range breakout. All DESIGN and AWAITING-VALIDATION.
+    Signal parameters for both legs. All DESIGN and AWAITING-VALIDATION.
 
     Ranges mirror SPECIFICATION.md section 14 and are enforced by `validate()`, so a
     sweep cannot silently wander outside the pre-registered search space.
+
+    Leg A and Leg B share one object deliberately. The stop rule, the time stop, the
+    re-entry fences, and the regime thresholds are properties of the system rather than of
+    a leg, and duplicating them would let the two legs drift apart silently.
     """
+    # --- Leg A: VWAP band reversion (SPECIFICATION.md section 8) ---------------
+    k_entry: float = 2.0                  # range 1.0-3.0   sigma from VWAP to arm
+    rvol_min: float = 0.80                # range 0.5-1.5
+    min_vwap_bars: int = 12               # range 1-100     VWAP sigma is noise before this
+    # --- Regime classification (SPECIFICATION.md section 7) -------------------
+    theta_trend: float = 0.35             # range 0.1-1.0
+    theta_range: float = 0.15             # range 0.0-0.5   must stay below theta_trend
+    theta_rvol: float = 1.10              # range 0.8-2.0
+    rv_lo: float = 0.20                   # range 0.0-0.5
+    rv_hi: float = 0.80                   # range 0.5-1.0
+    # --- Leg B: opening range breakout ----------------------------------------
     or_minutes: int = 30                  # range 5-60      HIGH OVERFIT RISK
     b_buffer_atr: float = 0.25            # range 0.0-1.0
     # Multiples of the RANDOM-WALK BASELINE, not of raw ATR. 1.0 means an ordinary
@@ -173,6 +188,14 @@ class StrategyParams:
 
     def validate(self) -> None:
         checks = [
+            ("k_entry", self.k_entry, 1.0, 3.0),
+            ("rvol_min", self.rvol_min, 0.5, 1.5),
+            ("min_vwap_bars", self.min_vwap_bars, 1, 100),
+            ("theta_trend", self.theta_trend, 0.1, 1.0),
+            ("theta_range", self.theta_range, 0.0, 0.5),
+            ("theta_rvol", self.theta_rvol, 0.8, 2.0),
+            ("rv_lo", self.rv_lo, 0.0, 0.5),
+            ("rv_hi", self.rv_hi, 0.5, 1.0),
             ("or_minutes", self.or_minutes, 5, 60),
             ("b_buffer_atr", self.b_buffer_atr, 0.0, 1.0),
             ("or_max_width_norm", self.or_max_width_norm, 0.5, 4.0),
@@ -191,6 +214,15 @@ class StrategyParams:
                     f"{name}={value} outside pre-registered range [{lo}, {hi}]. "
                     "Widening a range mid-search invalidates the multiple-testing correction."
                 )
+        if self.theta_range >= self.theta_trend:
+            raise ValueError(
+                f"theta_range={self.theta_range} must stay strictly below "
+                f"theta_trend={self.theta_trend}. Closing the gap removes the NEUTRAL "
+                "no-trade band and forces every bar into a regime, which is exactly the "
+                "behaviour section 7 was written to prevent."
+            )
+        if self.rv_lo >= self.rv_hi:
+            raise ValueError(f"rv_lo={self.rv_lo} must be below rv_hi={self.rv_hi}")
 
 
 @dataclass(frozen=True)
@@ -255,6 +287,10 @@ class ExecutionParams:
 class EngineConfig:
     """Top-level configuration. One object drives backtest and paper identically."""
     symbols: tuple[str, ...] = ("MES", "MNQ")
+    # Which entry leg is live. One leg per run: SPECIFICATION.md section 7 requires each
+    # regime route to report its own sample size and uncertainty, and a blended run cannot
+    # do that. A losing leg is never allowed to hide inside a combined statistic.
+    leg: str = "B"
     decision_bar_minutes: int = 5
     enabled_sessions: frozenset[Session] = DEFAULT_ENABLED
     strategy: StrategyParams = field(default_factory=StrategyParams)
@@ -276,6 +312,9 @@ class EngineConfig:
 
     def __post_init__(self) -> None:
         self.strategy.validate()
+        if self.leg not in ("A", "B"):
+            raise ValueError(f"unknown leg {self.leg!r}; expected 'A' or 'B'. "
+                             "Leg C is specified but not implemented.")
         if self.cost_scenario not in COST_SCENARIOS:
             raise ValueError(f"unknown cost scenario {self.cost_scenario!r}")
         for s in self.symbols:
@@ -325,6 +364,7 @@ class EngineConfig:
         """Full parameter snapshot recorded with every run for reproducibility."""
         return {
             "symbols": list(self.symbols),
+            "leg": self.leg,
             "decision_bar_minutes": self.decision_bar_minutes,
             "enabled_sessions": sorted(s.value for s in self.enabled_sessions),
             "strategy": asdict(self.strategy),

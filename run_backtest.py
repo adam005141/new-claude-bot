@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
 """
-Run the MES/MNQ opening-range backtest.
+Run the MES/MNQ intraday backtest.
 
-Chronological splits are enforced here, not left to the caller. The lockbox is refused
-unless explicitly unlocked, because a lockbox you can open by accident is not a lockbox.
+One leg per run. Chronological splits are enforced here, not left to the caller. The
+lockbox is refused unless explicitly unlocked, because a lockbox you can open by accident
+is not a lockbox.
 
-    python run_backtest.py --data data --split dev
+    python run_backtest.py --data data --split dev --leg B
+    python run_backtest.py --data data --split dev --leg A --cost-session ALL
     python run_backtest.py --data data --split dev --cost-scenario severe
     python run_backtest.py --data data --split validation --report out/
 
@@ -63,7 +65,9 @@ def prepare(data_dir: str, symbol: str, cfg: EngineConfig) -> pd.DataFrame:
     bars = resample(cont, cfg.decision_bar_minutes)
     p = cfg.strategy_for(symbol)
     return compute(bars, or_minutes=p.or_minutes, atr_window=p.atr_window,
-                   rvol_lookback=p.rvol_lookback, bar_minutes=cfg.decision_bar_minutes)
+                   rvol_lookback=p.rvol_lookback, bar_minutes=cfg.decision_bar_minutes,
+                   theta_trend=p.theta_trend, theta_range=p.theta_range,
+                   theta_rvol=p.theta_rvol, rv_lo=p.rv_lo, rv_hi=p.rv_hi)
 
 
 def main(argv=None) -> int:
@@ -71,6 +75,11 @@ def main(argv=None) -> int:
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--data", default="data")
     ap.add_argument("--symbols", nargs="+", default=["MES", "MNQ"])
+    ap.add_argument("--leg", choices=["A", "B"], default="B",
+                    help="A = VWAP band reversion (RANGE regime only), "
+                         "B = opening range breakout. One leg per run: each regime route "
+                         "reports its own sample size, so a losing leg cannot hide inside "
+                         "a combined statistic.")
     ap.add_argument("--split", choices=sorted(SPLITS), default="dev")
     ap.add_argument("--cost-scenario", choices=["base", "adverse", "severe"], default="adverse")
     ap.add_argument("--decision-minutes", type=int, default=5)
@@ -84,8 +93,10 @@ def main(argv=None) -> int:
                          "Example: --symbols MES --price-source ES")
     ap.add_argument("--cost-session", default="RTH_OPEN",
                     help="Charge this session's measured spread rather than the all-day "
-                         "figure. Leg B fires in the opening hour, which quotes wider "
-                         "than midday. Pass ALL to use the blended number.")
+                         "figure. Leg B fires in the opening hour, so it pays the opening "
+                         "spread; Leg A fires across the whole RTH day, so pass ALL for "
+                         "it. Measurement put the two within 1%% of each other, so this "
+                         "is a correctness choice, not a material one.")
     ap.add_argument("--no-prop", action="store_true",
                     help="Personal mode: no prop rule layer")
     ap.add_argument("--report", type=Path, help="Directory for CSV/JSON artefacts")
@@ -105,6 +116,7 @@ def main(argv=None) -> int:
 
     cfg = EngineConfig(
         symbols=tuple(args.symbols),
+        leg=args.leg,
         decision_bar_minutes=args.decision_minutes,
         strategy=StrategyParams(or_minutes=args.or_minutes),
         cost_scenario=args.cost_scenario,
@@ -118,7 +130,8 @@ def main(argv=None) -> int:
         cfg.prop = replace(cfg.prop, enabled=False)
 
     cost_source = "MEASURED" if args.measured_costs else "ASSUMED"
-    print(f"engine {__version__} | split={args.split} | "
+    leg_name = {"A": "A VWAP band reversion", "B": "B opening range breakout"}[args.leg]
+    print(f"engine {__version__} | leg={leg_name} | split={args.split} | "
           f"costs={args.cost_scenario} ({cost_source}) | "
           f"prop={'off' if args.no_prop else 'on'}")
     if args.price_source:
@@ -162,7 +175,8 @@ def main(argv=None) -> int:
         metrics = compute_metrics(trades, sessions_in_sample=observed)
         ci = block_bootstrap_ci(trades, seed=cfg.seed)
 
-        print(format_report(metrics, f"{symbol} | {args.split} | {args.cost_scenario}", ci))
+        print(format_report(
+            metrics, f"{symbol} | leg {args.leg} | {args.split} | {args.cost_scenario}", ci))
         if result.rejections:
             print("  rejected opportunities:")
             for reason, count in sorted(result.rejections.items(),
@@ -210,10 +224,14 @@ def main(argv=None) -> int:
         out.mkdir(parents=True, exist_ok=True)
         combined = pd.concat([t for t in all_trades if not t.empty], ignore_index=True) \
             if any(not t.empty for t in all_trades) else pd.DataFrame()
+        # The leg is in the filename so a Leg A run can never silently overwrite the Leg B
+        # artefacts that a published result cites.
+        tag = f"leg{args.leg}_{args.split}_{args.cost_scenario}"
         if not combined.empty:
-            combined.to_csv(out / f"trades_{args.split}_{args.cost_scenario}.csv", index=False)
-        (out / f"summary_{args.split}_{args.cost_scenario}.json").write_text(
+            combined.to_csv(out / f"trades_{tag}.csv", index=False)
+        (out / f"summary_{tag}.json").write_text(
             json.dumps({"engine_version": __version__,
+                        "leg": args.leg,
                         "split": args.split,
                         "cost_scenario": args.cost_scenario,
                         "config": cfg.fingerprint(),

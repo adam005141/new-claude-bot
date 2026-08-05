@@ -1,4 +1,13 @@
 """
+Legs A and B.
+
+Leg A: VWAP band reversion. Economic thesis: intraday order flow around a volume-weighted
+reference is mean reverting inside a range, because liquidity provision is compensated for
+absorbing temporary imbalance. The competing explanation that must be ruled out: a
+2-sigma excursion in a market that is actually trending is the START of a move, not an
+overshoot, which is why the leg is fenced to the RANGE regime and why the regime
+classifier is the load-bearing component rather than the entry rule.
+
 Leg B: opening range breakout.
 
 Economic thesis: overnight information accumulates and is repriced in the opening
@@ -18,6 +27,7 @@ from dataclasses import dataclass
 
 from .config import CostModel, Instrument, RiskParams, StrategyParams
 from .execution import Side
+from .regime import Regime
 from .sizing import expected_move_floor, stop_distance
 
 
@@ -62,6 +72,110 @@ class SessionState:
 
     def record_exit(self, bar_index: int) -> None:
         self.last_exit_bar = bar_index
+
+
+class VWAPBandReversion:
+    """
+    Leg A. Stateless evaluator, same contract as Leg B.
+
+    The two-bar structure is the whole design. A touch rule enters into continuing
+    momentum; requiring the excursion at t-1 and the reclaim at t makes the market
+    demonstrate rejection before any risk is committed. That costs entry price, and is
+    expected to lower the win rate while improving payoff. Which effect dominates is
+    AWAITING-VALIDATION and is what the run is for.
+    """
+
+    name = "VWAP_REVERSION"
+
+    def __init__(self, params: StrategyParams, inst: Instrument,
+                 risk: RiskParams, costs: CostModel):
+        self.p = params
+        self.inst = inst
+        self.risk = risk
+        self.costs = costs
+
+    def evaluate(self, row, state: SessionState,
+                 bar_index: int = 0) -> Signal | Rejection | None:
+        if state.entries >= self.p.max_entries_per_session:
+            return None
+
+        dev, prev_dev = row.get("vwap_dev"), row.get("prev_vwap_dev")
+        vwap, sigma, atr_ = row.get("vwap"), row.get("vwap_sigma"), row.get("atr")
+        if any(v is None or v != v for v in (dev, prev_dev, vwap, sigma, atr_)):
+            return None
+        if sigma <= 0 or atr_ <= 0:
+            return None
+
+        # VWAP sigma computed off a handful of bars describes those bars, not the session.
+        # Arming before it has settled would fire on an artefact of the anchor.
+        if row.get("bar_of_session", 0) < self.p.min_vwap_bars:
+            return None
+
+        # DIRECTION FIRST, then filters, for the same reason as Leg B: rejection counters
+        # are only comparable when every one of them is answering "of the setups that
+        # actually triggered, why was each refused?"
+        k = self.p.k_entry
+        if prev_dev < -k and dev >= -k and self.p.allow_long:
+            side = Side.LONG
+        elif prev_dev > k and dev <= k and self.p.allow_short:
+            side = Side.SHORT
+        else:
+            return None
+
+        # The regime gate is what stops this fading a real trend. It is checked as a
+        # rejection rather than silently, so the run reports how much of the raw setup
+        # population the classifier removed.
+        if row.get("regime", Regime.NEUTRAL) != Regime.RANGE:
+            return Rejection("NOT_RANGE_REGIME")
+
+        if bool(row.get("entries_blocked", False)):
+            return Rejection("ROLL_OR_EXPIRY")
+
+        rvol = row.get("rvol")
+        if rvol is None or rvol != rvol or rvol < self.p.rvol_min:
+            return Rejection("RVOL_TOO_LOW")
+
+        # Re-entry fences, mirrored from Leg B. For a reversion the "new extreme" is a
+        # deeper excursion, not a further breakout, so the comparison is inverted: a
+        # second long must be further BELOW the prior entry, otherwise a slow bleed
+        # through the band books three correlated losses as three independent trades.
+        close = row["close"]
+        if state.entries > 0:
+            if state.last_exit_bar is not None:
+                if bar_index - state.last_exit_bar < self.p.reentry_cooldown_bars:
+                    return Rejection("REENTRY_COOLDOWN")
+            prior = state.last_entry_long if side is Side.LONG else state.last_entry_short
+            if prior is not None:
+                needed = self.p.reentry_new_extreme_atr * atr_
+                deeper = ((prior - close) if side is Side.LONG else (close - prior))
+                if deeper < needed:
+                    return Rejection("NO_NEW_EXTREME")
+
+        # Target is the mean itself (section 9). If price has already reclaimed past VWAP
+        # the trade the thesis describes no longer exists, so there is nothing to take.
+        target_pts = (vwap - close) if side is Side.LONG else (close - vwap)
+        if target_pts <= 0:
+            return None
+
+        stop_pts = stop_distance(atr_, self.inst, self.p.m_stop_atr, self.p.min_stop_ticks)
+
+        floor = expected_move_floor(self.inst, self.costs, self.risk.mu_min)
+        if target_pts < floor:
+            return Rejection("MOVE_FLOOR")
+
+        entry = close
+        stop = entry - side.sign * stop_pts
+        target = entry + side.sign * target_pts
+
+        return Signal(
+            side=side,
+            trigger_price=entry,
+            stop_price=self.inst.round_to_tick(stop),
+            target_price=self.inst.round_to_tick(target),
+            stop_distance_points=stop_pts,
+            target_distance_points=target_pts,
+            reason=f"VWAPREV_{side.value}",
+        )
 
 
 class OpeningRangeBreakout:

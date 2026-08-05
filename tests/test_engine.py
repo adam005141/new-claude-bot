@@ -34,6 +34,8 @@ from engine.sizing import expected_move_floor, size_position, stop_distance  # n
 from engine.backtest import Backtester  # noqa: E402
 from engine.reporting import block_bootstrap_ci, compute_metrics  # noqa: E402
 from engine.config import PropRules  # noqa: E402
+from engine.regime import Regime  # noqa: E402
+from engine.strategy import SessionState  # noqa: E402
 
 
 # ---------------------------------------------------------------------------
@@ -817,3 +819,177 @@ def test_trade_rate_divides_by_sessions_actually_replayed():
     full_split = compute_metrics(trades, sessions_in_sample=400)
     observed = compute_metrics(trades, sessions_in_sample=100)
     assert observed.trades_per_day == pytest.approx(4 * full_split.trades_per_day)
+
+
+# ---------------------------------------------------------------------------
+# Leg A: regime classification and VWAP band reversion
+# ---------------------------------------------------------------------------
+
+def _regime_inputs(slope, rvol, rv_pct):
+    return (pd.Series([slope]), pd.Series([rvol]), pd.Series([rv_pct]))
+
+
+def _classify_one(slope, rvol, rv_pct, **kw):
+    from engine.regime import classify
+    p = {"theta_trend": 0.35, "theta_range": 0.15, "theta_rvol": 1.10,
+         "rv_lo": 0.20, "rv_hi": 0.80, **kw}
+    return classify(*_regime_inputs(slope, rvol, rv_pct), **p).iloc[0]
+
+
+def test_regime_neutral_band_between_the_thresholds_never_trades():
+    """
+    A slope between theta_range and theta_trend belongs to neither regime. Without the
+    gap every bar is forced into a regime and the classifier manufactures trades exactly
+    where its own signal is weakest.
+    """
+    from engine.regime import Regime
+    assert _classify_one(0.25, 1.5, 0.5) is Regime.NEUTRAL
+    assert _classify_one(0.10, 1.5, 0.5) is Regime.RANGE
+    assert _classify_one(0.50, 1.5, 0.5) is Regime.TREND
+
+
+def test_regime_missing_inputs_are_never_tradable():
+    from engine.regime import Regime
+    assert _classify_one(np.nan, 1.5, 0.5) is Regime.NEUTRAL
+    assert _classify_one(0.10, np.nan, 0.5) is Regime.NEUTRAL
+    assert _classify_one(0.10, 1.5, np.nan) is Regime.NEUTRAL
+
+
+def test_regime_range_requires_middling_volatility():
+    """Flat slope is not enough: the quietest and wildest days are excluded by rv_pct."""
+    from engine.regime import Regime
+    assert _classify_one(0.10, 1.5, 0.05) is Regime.NEUTRAL
+    assert _classify_one(0.10, 1.5, 0.95) is Regime.NEUTRAL
+
+
+def test_regime_trend_requires_participation():
+    """A steep VWAP on thin volume is drift, not a trend, so it must not classify TREND."""
+    from engine.regime import Regime
+    assert _classify_one(0.90, 0.40, 0.5) is Regime.NEUTRAL
+
+
+def test_collapsing_the_neutral_band_is_rejected_by_config():
+    with pytest.raises(ValueError, match="theta_range"):
+        StrategyParams(theta_range=0.35, theta_trend=0.35).validate()
+
+
+def _leg_a_row(**over):
+    row = {
+        "close": 5800.0, "vwap": 5810.0, "vwap_sigma": 4.0,
+        "vwap_dev": -2.0, "prev_vwap_dev": -2.6, "atr": 3.0, "rvol": 1.0,
+        "bar_of_session": 50, "regime": Regime.RANGE, "entries_blocked": False,
+    }
+    row.update(over)
+    return row
+
+
+def _leg_a(params: StrategyParams | None = None):
+    from engine.strategy import VWAPBandReversion
+    return VWAPBandReversion(params or StrategyParams(), MES, RiskParams(), COST_ADVERSE)
+
+
+def test_leg_a_requires_excursion_then_reclaim_not_just_a_touch():
+    """
+    A touch rule enters into continuing momentum. The two-bar structure demands the prior
+    bar be OUTSIDE the band and the current bar back inside it.
+    """
+    from engine.strategy import Signal
+    leg = _leg_a()
+    # Excursion at t-1, reclaim at t: this is the setup.
+    assert isinstance(leg.evaluate(_leg_a_row(), SessionState()), Signal)
+    # Still outside at t: the market has not demonstrated rejection yet.
+    assert leg.evaluate(_leg_a_row(vwap_dev=-2.4), SessionState()) is None
+    # Never outside at t-1: nothing to revert from.
+    assert leg.evaluate(_leg_a_row(prev_vwap_dev=-1.5), SessionState()) is None
+
+
+def test_leg_a_refuses_to_fade_a_trending_market():
+    from engine.strategy import Rejection
+    leg = _leg_a()
+    for r in (Regime.TREND, Regime.NEUTRAL):
+        out = leg.evaluate(_leg_a_row(regime=r), SessionState())
+        assert isinstance(out, Rejection) and out.reason == "NOT_RANGE_REGIME"
+
+
+def test_leg_a_shorts_are_the_exact_mirror_of_longs():
+    from engine.strategy import Signal
+    leg = _leg_a()
+    long_ = leg.evaluate(_leg_a_row(), SessionState())
+    short = leg.evaluate(_leg_a_row(close=5820.0, vwap_dev=2.0, prev_vwap_dev=2.6),
+                         SessionState())
+    assert isinstance(short, Signal) and short.side is Side.SHORT
+    assert short.target_distance_points == pytest.approx(long_.target_distance_points)
+    assert short.stop_distance_points == pytest.approx(long_.stop_distance_points)
+
+
+def test_leg_a_targets_the_mean_and_never_beyond_it():
+    """Target is VWAP itself. A move that has already reached it is not a trade."""
+    leg = _leg_a()
+    sig = leg.evaluate(_leg_a_row(), SessionState())
+    assert sig.target_distance_points == pytest.approx(10.0)   # 5810 vwap - 5800 close
+    assert leg.evaluate(_leg_a_row(close=5815.0), SessionState()) is None
+
+
+def test_leg_a_rejects_a_reversion_too_small_to_pay_its_own_costs():
+    from engine.strategy import Rejection
+    leg = _leg_a()
+    floor = expected_move_floor(MES, COST_ADVERSE, RiskParams().mu_min)
+    # A VWAP a hair above the close leaves less room than the round trip needs.
+    out = leg.evaluate(_leg_a_row(vwap=5800.0 + floor / 2), SessionState())
+    assert isinstance(out, Rejection) and out.reason == "MOVE_FLOOR"
+
+
+def test_leg_a_reentry_requires_a_deeper_excursion_not_a_further_breakout():
+    """
+    Leg B's new-extreme fence looks for price extending past the prior entry. For a
+    reversion the analogue is inverted: a second long must be further BELOW the first,
+    otherwise a slow bleed through the band books correlated losses as new trades.
+    """
+    from engine.strategy import Rejection, Signal
+    leg = _leg_a()
+    state = SessionState(entries=1, last_exit_bar=0, last_entry_long=5800.0)
+    shallower = leg.evaluate(_leg_a_row(close=5801.0), state, bar_index=10)
+    assert isinstance(shallower, Rejection) and shallower.reason == "NO_NEW_EXTREME"
+    deeper = leg.evaluate(_leg_a_row(close=5795.0, vwap=5810.0), state, bar_index=10)
+    assert isinstance(deeper, Signal)
+
+
+def test_leg_a_waits_for_the_vwap_sigma_to_settle():
+    leg = _leg_a()
+    assert leg.evaluate(_leg_a_row(bar_of_session=2), SessionState()) is None
+
+
+def test_leg_selection_actually_changes_the_strategy():
+    from engine.strategy import OpeningRangeBreakout, VWAPBandReversion
+    assert isinstance(Backtester(EngineConfig(symbols=("MES",), leg="A"), "MES").strategy,
+                      VWAPBandReversion)
+    assert isinstance(Backtester(EngineConfig(symbols=("MES",), leg="B"), "MES").strategy,
+                      OpeningRangeBreakout)
+
+
+def test_leg_a_features_never_reference_future_bars():
+    df = _session_bars("2026-03-03", n=60)
+    full = compute(df, or_minutes=30, atr_window=14, rvol_lookback=20)
+    trunc = compute(df.iloc[:40].copy(), or_minutes=30, atr_window=14, rvol_lookback=20)
+    for col in ("vwap_sigma", "vwap_dev", "prev_vwap_dev"):
+        a = full[col].iloc[:40].to_numpy(dtype=float)
+        b = trunc[col].to_numpy(dtype=float)
+        assert np.allclose(a, b, equal_nan=True), f"{col} depends on future bars"
+
+
+def test_prev_vwap_dev_never_crosses_a_session_boundary():
+    a = _session_bars("2026-03-03", n=20, base=5800.0)
+    b = _session_bars("2026-03-04", n=20, base=6000.0)
+    feats = compute(pd.concat([a, b], ignore_index=True),
+                    or_minutes=30, atr_window=14, rvol_lookback=20)
+    first_of_second = feats.index[feats["session_date"] == date(2026, 3, 4)][0]
+    assert pd.isna(feats["prev_vwap_dev"].iloc[first_of_second]), (
+        "the first bar of a session must not inherit the previous session's deviation")
+
+
+def test_leg_a_backtest_runs_and_is_deterministic():
+    cfg = EngineConfig(symbols=("MES",), leg="A")
+    feats = compute(_synthetic_market(), or_minutes=30, atr_window=14, rvol_lookback=20)
+    a = Backtester(cfg, "MES").run(feats)
+    b = Backtester(cfg, "MES").run(feats)
+    pd.testing.assert_frame_equal(a.trades_frame(), b.trades_frame())

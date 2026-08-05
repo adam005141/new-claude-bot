@@ -15,6 +15,7 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
+from . import regime
 from .sessions import ET, minutes_since_rth_open, session_dates
 
 
@@ -32,7 +33,7 @@ def session_vwap(df: pd.DataFrame) -> pd.Series:
     return (cum_pv / cum_v.replace(0.0, np.nan)).ffill()
 
 
-def vwap_bands(df: pd.DataFrame, vwap: pd.Series, k: float) -> tuple[pd.Series, pd.Series]:
+def vwap_sigma(df: pd.DataFrame, vwap: pd.Series) -> pd.Series:
     """
     Volume-weighted POPULATION standard deviation about the running VWAP.
 
@@ -48,7 +49,12 @@ def vwap_bands(df: pd.DataFrame, vwap: pd.Series, k: float) -> tuple[pd.Series, 
     cum_pv2 = (tp.pow(2) * vol).groupby(sd, sort=False).cumsum()
     mean_sq = cum_pv2 / cum_v.replace(0.0, np.nan)
     var = (mean_sq - vwap.pow(2)).clip(lower=0.0)
-    sigma = np.sqrt(var)
+    return np.sqrt(var)
+
+
+def vwap_bands(df: pd.DataFrame, vwap: pd.Series, k: float) -> tuple[pd.Series, pd.Series]:
+    """Bands at +/- k sigma. Kept as a convenience over `vwap_sigma`."""
+    sigma = vwap_sigma(df, vwap)
     return vwap - k * sigma, vwap + k * sigma
 
 
@@ -156,7 +162,10 @@ def vwap_slope(vwap: pd.Series, atr_: pd.Series, sd: pd.Series, k: int = 10) -> 
 
 def compute(df: pd.DataFrame, *, or_minutes: int, atr_window: int,
             rvol_lookback: int, rv_window: int = 30,
-            vwap_k: float = 2.0, bar_minutes: int = 5) -> pd.DataFrame:
+            vwap_k: float = 2.0, bar_minutes: int = 5,
+            theta_trend: float = 0.35, theta_range: float = 0.15,
+            theta_rvol: float = 1.10, rv_lo: float = 0.20,
+            rv_hi: float = 0.80) -> pd.DataFrame:
     """Attach every feature. Input must be sorted, single-symbol, decision-timeframe bars."""
     if df.empty:
         return df.copy()
@@ -165,7 +174,15 @@ def compute(df: pd.DataFrame, *, or_minutes: int, atr_window: int,
     sd = out["session_date"]
 
     out["vwap"] = session_vwap(out)
-    out["vwap_lower"], out["vwap_upper"] = vwap_bands(out, out["vwap"], vwap_k)
+    out["vwap_sigma"] = vwap_sigma(out, out["vwap"])
+    out["vwap_lower"] = out["vwap"] - vwap_k * out["vwap_sigma"]
+    out["vwap_upper"] = out["vwap"] + vwap_k * out["vwap_sigma"]
+    # Deviation in sigma units. Leg A's two-bar test is a statement about this quantity at
+    # t-1 and t, so expressing it once here keeps the strategy from re-deriving it and
+    # keeps the prior-bar value from being taken across a session boundary.
+    out["vwap_dev"] = ((out["close"] - out["vwap"])
+                       / out["vwap_sigma"].replace(0.0, np.nan))
+    out["prev_vwap_dev"] = out.groupby(sd, sort=False)["vwap_dev"].shift(1)
     out["atr"] = atr(out, atr_window)
     out["realized_vol"] = realized_vol(out, rv_window)
     out["rvol"] = relative_volume(out, rvol_lookback)
@@ -182,5 +199,10 @@ def compute(df: pd.DataFrame, *, or_minutes: int, atr_window: int,
     pct = (per_session_rv.shift(1).rolling(60, min_periods=10)
            .rank(pct=True))
     out["rv_pct"] = out["session_date"].map(pct)
+
+    # Regime last: it consumes vwap_slope, rvol, and rv_pct, all of which are already
+    # causal by construction above.
+    out["regime"] = regime.attach(out, theta_trend=theta_trend, theta_range=theta_range,
+                                  theta_rvol=theta_rvol, rv_lo=rv_lo, rv_hi=rv_hi)
 
     return out

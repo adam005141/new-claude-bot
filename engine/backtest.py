@@ -26,7 +26,11 @@ from .execution import (
 from .risk import RiskEngine, RiskState
 from .sessions import ET, classify_index, is_tradable, SessionCalendar
 from .sizing import size_position
-from .strategy import OpeningRangeBreakout, Rejection, SessionState, Signal
+from .strategy import (
+    OpeningRangeBreakout, Rejection, SessionState, Signal, VWAPBandReversion,
+)
+
+LEGS = {"A": VWAPBandReversion, "B": OpeningRangeBreakout}
 
 log = logging.getLogger(__name__)
 
@@ -93,7 +97,7 @@ class Backtester:
         self.params = config.strategy_for(symbol)
         self.costs = config.costs_for(symbol)
         self.calendar = calendar or SessionCalendar()
-        self.strategy = OpeningRangeBreakout(self.params, self.inst, config.risk, self.costs)
+        self.strategy = LEGS[config.leg](self.params, self.inst, config.risk, self.costs)
         self.risk = RiskEngine(rules=config.prop, risk=config.risk)
 
     # ------------------------------------------------------------------

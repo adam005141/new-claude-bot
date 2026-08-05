@@ -42,6 +42,47 @@ sample was not hiding a fragile edge, it was hiding a negative one.
 
 ---
 
+## Registered BEFORE execution: run 11 (Leg A)
+
+Recorded here before the code was written, not merely before it was run. Nothing below has
+been executed.
+
+| Field | Value |
+|---|---|
+| Planned date | 2026-08-05 |
+| Instrument | **MES**, prices from **ES** (`--price-source ES`), same dataset as runs 9-10 |
+| Leg | **A (VWAP band reversion)**, RANGE regime only |
+| Parameters | `k_entry` 2.0, `rvol_min` 0.80, `min_vwap_bars` 12, regime `theta_trend` 0.35, `theta_range` 0.15, `theta_rvol` 1.10, `rv_lo` 0.20, `rv_hi` 0.80. All taken verbatim from SPECIFICATION.md sections 7 and 8, written 2026-07-31, before any data existed. |
+| Shared with Leg B | `m_stop_atr` 1.5, `min_stop_ticks` 8, `max_bars_in_trade` 24, re-entry fences, `mu_min` 0.25 |
+| Costs | `config/measured_costs.json`, measured from MES quotes, adverse |
+| Split | development only. Validation and lockbox remain **UNTOUCHED**. |
+
+**Trial count.** This is the **second distinct configuration** in the project. Runs 1-10
+were one frozen parameter set under different cost and data conditions. Leg A is a
+genuinely new trial and raises the multiple-testing burden for every subsequent claim: at
+two trials a nominal p of 0.05 corresponds to a family-wise 0.10, so the significance bar
+for Leg A is stricter than it was for Leg B, not the same.
+
+**Power, stated before the result so it cannot be rationalised after.** Leg B produced
+0.68 trades per session on this split. Leg A trades only in RANGE, which is a strict
+subset of sessions, so its trade count will be **lower**, not higher. At n in the 150-300
+band the minimum detectable edge is roughly 0.15R against a plausible true edge of
+0.02-0.10R. **This run can return a decisive negative. It cannot return a decisive
+positive.** A positive result here means "not yet excluded", and the correct response
+would be to spend the validation split, not to believe it.
+
+**Prediction, recorded before the run so it can be wrong.** Leg A is negative or
+indistinguishable from zero on a cost-adjusted basis, and the binding failure is the
+expected-move floor rather than the signal: the distance from a 2-sigma excursion back to
+VWAP on MES is frequently smaller than the round trip it has to clear. I expect the
+`MOVE_FLOOR` rejection counter to exceed the trade count.
+
+**What would make me wrong.** A positive gross-of-cost expectancy at n >= 200 with a
+95% CI excluding zero, holding in both directions and in a majority of contracts. That is
+the same bar Leg B failed.
+
+---
+
 ## Registered BEFORE execution: run 9
 
 Recorded here before the run, per rule 1. Nothing below has been executed.
