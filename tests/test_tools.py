@@ -501,3 +501,49 @@ def test_import_records_timezone_provenance(tmp_path):
     assert meta["source_timezone"] == "America/Chicago"
     assert "inferred" in meta["timezone_determination"]
     assert meta["adjustment"] == "unadjusted"
+
+
+def _junk_csv(d: Path, name: str, text: str) -> Path:
+    path = d / name
+    path.write_text(text)
+    return path
+
+
+def test_import_skips_unrelated_csvs_instead_of_aborting(tmp_path):
+    """
+    A real Downloads folder is full of bank statements and invoices. Aborting on the
+    first unrecognised file would make --src point at it useless.
+    """
+    from tools.import_barchart import cmd_import
+    src = tmp_path / "Downloads"; src.mkdir()
+    _barchart_csv(src, "America/Chicago", "MESH24_2024-01-02.csv")
+    _junk_csv(src, "bank_statement.csv", "Date,Description,Amount\n2024-01-01,COFFEE,-4.50\n")
+    _junk_csv(src, "invoice.csv", "a,b,c\n1,2,3\n")
+
+    assert cmd_import(src, tmp_path / "out", None, None, "1min") == 0
+    assert (tmp_path / "out" / "MES" / "MES_202403_1min_TRADES.parquet").exists()
+
+
+def test_symbol_is_read_from_a_symbol_column_when_the_filename_lacks_it(tmp_path):
+    """Browsers save Barchart exports under names like 'barchart_export (3).csv'."""
+    from tools.import_barchart import cmd_import, symbol_from_content
+    src = tmp_path / "Downloads"; src.mkdir()
+    made = _barchart_csv(src, "America/Chicago", "MESM24_tmp.csv", days=12)
+
+    # Rewrite it with a Symbol column and a filename carrying no contract.
+    df = pd.read_csv(made, nrows=12 * 1380)
+    df.insert(0, "Symbol", "MESM24")
+    renamed = src / "barchart_export (3).csv"
+    df.to_csv(renamed, index=False)
+    made.unlink()
+
+    assert symbol_from_content(renamed) == "MESM24"
+    assert cmd_import(src, tmp_path / "out", None, None, "1min") == 0
+    assert (tmp_path / "out" / "MES" / "MES_202406_1min_TRADES.parquet").exists()
+
+
+def test_import_errors_only_when_nothing_is_usable(tmp_path):
+    from tools.import_barchart import cmd_import
+    src = tmp_path / "Downloads"; src.mkdir()
+    _junk_csv(src, "bank_statement.csv", "Date,Description,Amount\n2024-01-01,X,-1\n")
+    assert cmd_import(src, tmp_path / "out", None, None, "1min") == 1

@@ -100,7 +100,15 @@ intraday, and step through the contract's active window in chunks under 10,000 r
 Save the files with the contract symbol in the filename, for example
 `MESM26_2026-04-01.csv`. The importer reads the symbol from the filename.
 
-Put them all in one folder, say `downloads\`.
+You do NOT need to move them. Point `--src` at wherever the browser saved them:
+
+```powershell
+py tools\import_barchart.py --src $HOME\Downloads --out data
+```
+
+The importer only picks up files that carry a contract symbol, either in the filename or
+in a `Symbol` column inside the CSV, so bank statements and invoices sitting in the same
+folder are counted and skipped rather than aborting the run.
 
 ### Step 2: check ONE file before downloading hundreds
 

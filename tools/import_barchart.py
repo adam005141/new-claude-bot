@@ -231,6 +231,33 @@ def symbol_from_filename(path: Path) -> str | None:
     return None
 
 
+def symbol_from_content(path: Path) -> str | None:
+    """
+    Fall back to a Symbol column inside the CSV.
+
+    Barchart's default export filenames do not always carry the contract, and users
+    reasonably leave files named however the browser saved them. Reading the symbol from
+    the data is more reliable than insisting on a naming convention.
+    """
+    try:
+        head = pd.read_csv(path, nrows=5)
+    except Exception:                                     # noqa: BLE001
+        return None
+    for col in head.columns:
+        if str(col).strip().lower() in ("symbol", "contract", "ticker"):
+            for value in head[col].astype(str):
+                token = value.strip().upper()
+                if SYMBOL_RE.match(token):
+                    return token
+    return None
+
+
+def resolve_symbol(path: Path, override: str | None) -> str | None:
+    if override and SYMBOL_RE.match(override.upper()):
+        return override.upper()
+    return symbol_from_filename(path) or symbol_from_content(path)
+
+
 def cmd_check(paths: list[Path]) -> int:
     for path in paths:
         print(f"\n=== {path.name} ===")
@@ -266,31 +293,44 @@ def cmd_import(src: Path, out: Path, symbol_override: str | None,
     groups: dict[tuple[str, str], list[pd.DataFrame]] = defaultdict(list)
     resolved_tz: str | None = assume_tz
     tz_source = "user override" if assume_tz else None
+    skipped: dict[str, int] = defaultdict(int)
 
+    # Files that ARE Barchart contract exports, so a folder full of unrelated CSVs (a
+    # browser Downloads directory, typically) does not abort the run. Anything skipped
+    # is counted and reported rather than passing unnoticed.
+    usable: list[tuple[Path, str]] = []
     for path in files:
+        sym = resolve_symbol(path, symbol_override)
+        if not sym:
+            skipped["no contract symbol in filename or contents"] += 1
+            continue
+        usable.append((path, sym))
+
+    if not usable:
+        log.error("no Barchart contract exports found under %s", src)
+        log.error("Files must carry a contract symbol such as MESM26, either in the "
+                  "filename or in a Symbol column. Checked %d CSV file(s).", len(files))
+        return 1
+
+    log.info("%d of %d CSV files look like Barchart contract exports",
+             len(usable), len(files))
+
+    for path, sym in usable:
         try:
             df = read_csv(path)
         except Exception as exc:                          # noqa: BLE001
-            log.error("%s: %s", path.name, exc)
-            return 1
+            log.warning("%s: unreadable, skipping (%s)", path.name, exc)
+            skipped["unreadable"] += 1
+            continue
         if df.empty:
-            log.warning("%s: no usable rows, skipping", path.name)
+            skipped["no usable rows"] += 1
             continue
 
-        sym = symbol_override or symbol_from_filename(path)
-        if not sym:
-            log.error("%s: cannot determine contract symbol from the filename. "
-                      "Rename it to include e.g. MESM26, or pass --symbol.", path.name)
-            return 1
-        root, contract_month = parse_symbol(sym) if SYMBOL_RE.match(sym) else (sym, None)
-        if contract_month is None:
-            log.error("%s: --symbol %s is a root, not a dated contract. The filename "
-                      "must identify the contract (e.g. MESM26).", path.name, sym)
-            return 1
+        root, contract_month = parse_symbol(sym)
 
         # Infer the timezone ONCE, from the largest file, then apply it everywhere.
         if resolved_tz is None:
-            biggest = max(files, key=lambda p: p.stat().st_size)
+            biggest = max((p for p, _ in usable), key=lambda p: p.stat().st_size)
             try:
                 resolved_tz, _ = infer_timezone(read_csv(biggest))
                 tz_source = f"inferred from {biggest.name}"
@@ -353,6 +393,11 @@ def cmd_import(src: Path, out: Path, symbol_override: str | None,
                  str(merged['timestamp_utc'].iloc[0])[:10],
                  str(merged['timestamp_utc'].iloc[-1])[:10])
         written += 1
+
+    if skipped:
+        print("\nskipped:")
+        for reason, count in sorted(skipped.items(), key=lambda kv: -kv[1]):
+            print(f"  {count:>5}  {reason}")
 
     print(f"\n{written} contract files written to {out}")
     print(f"timezone used: {resolved_tz} ({tz_source})")
