@@ -26,6 +26,42 @@ robustness checking rather than a search. No parameter has been tuned against a 
 changing the verdict; measurement confirmed it. Any further work requires either deeper
 history with these rules frozen beforehand, or a different leg registered here first.
 
+---
+
+## Registered BEFORE execution: run 9
+
+Recorded here before the run, per rule 1. Nothing below has been executed.
+
+| Field | Value |
+|---|---|
+| Planned date | 2026-08-04 |
+| Instrument | **ES** as a validated proxy for MES signal research |
+| Leg | B (ORB) |
+| Parameters | **UNCHANGED** from runs 1-8. Frozen before the new data was seen. |
+| Data | Barchart 1-minute, 13 dated contracts, 2023-08-03 to 2026-08-03 |
+| Costs | `config/measured_costs.json`, measured from **MES** quotes |
+| Split | development only. Validation and lockbox remain untouched. |
+| Expected dev n | ~236 trades at the measured 0.63 trades/session |
+| Expected detection floor | ~0.15R, against ~0.28R on the 11-month sample |
+
+**Proxy justification.** `tools/compare_es_mes.py` on the 230-session overlap:
+triggers disagree on **1.19%** of firing bars (89 ES-only, 52 MES-only, **0 opposite
+directions**), against a threshold of 2% fixed in the tool before the measurement. Price
+basis is 0.000 ticks median with 90.4% of bars inside one tick.
+
+The large basis tail (p05 -218 ticks, max 287) is **roll misalignment, not basis**: ES and
+MES pick their active contract from their own volume crossovers and do not always roll on
+the same session, so those bars measure the quarterly calendar spread of roughly 50 index
+points. An intraday ES/MES basis is arbitraged to well under a tick; a 54-point gap is two
+different contracts, not two different books. It does not affect the trigger because the
+opening range and the close shift together.
+
+**Prediction, recorded before the run so it can be wrong.** Leg B fails again. The
+concentration failure is a property of what was measured, not of how much, and more data
+does not repair it. What the larger sample buys is a fairer test, not a better result.
+
+---
+
 **Splits consumed:**
 
 | Split | Status |

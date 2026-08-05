@@ -102,6 +102,19 @@ def main(argv=None) -> int:
     print(f"\nOverlap: {len(merged):,} bars across {sessions} sessions "
           f"({merged['session_date_p'].min()} to {merged['session_date_p'].max()})\n")
 
+    # ES and MES choose their active contract from their OWN volume crossover, and the
+    # micro does not always roll on the same session as the mini. In that window one
+    # series sits on the front contract and the other on the back, so the "basis" is
+    # really the calendar spread, roughly 50 index points or 200 ticks. Separating those
+    # bars is the difference between a scary-looking tail and a correct diagnosis.
+    roll_mismatch = merged["contract_month_p"] != merged["contract_month_m"]
+    n_mis = int(roll_mismatch.sum())
+    if n_mis:
+        print(f"Roll misalignment: {n_mis:,} bars ({n_mis/len(merged):.1%}) where ES and "
+              f"MES sat on DIFFERENT contracts.\n"
+              f"  Those bars measure the calendar spread, not the basis, and are reported "
+              f"separately below.\n")
+
     # --- 1. price basis ---------------------------------------------------
     basis = (merged["close_p"] - merged["close_m"]) / tick
     print("=== price basis, ES minus MES, in ticks ===")
@@ -110,6 +123,17 @@ def main(argv=None) -> int:
                          ("max |basis|", basis.abs().max())):
         print(f"  {label:<14}{value:>10.3f}")
     print(f"  within 1 tick {(basis.abs() <= 1).mean():>9.1%}")
+
+    if n_mis and (~roll_mismatch).any():
+        aligned = basis[~roll_mismatch]
+        print("\n  excluding roll-misaligned bars (same contract on both):")
+        print(f"    bars          {len(aligned):>10,}")
+        print(f"    median        {aligned.median():>10.3f}")
+        print(f"    mean          {aligned.mean():>10.3f}")
+        print(f"    p05 / p95     {aligned.quantile(0.05):>10.3f} /"
+              f" {aligned.quantile(0.95):.3f}")
+        print(f"    max |basis|   {aligned.abs().max():>10.3f}")
+        print(f"    within 1 tick {(aligned.abs() <= 1).mean():>9.1%}")
 
     # --- 2. opening-range levels -----------------------------------------
     ready = merged["or_ready_p"] & merged["or_ready_m"]
