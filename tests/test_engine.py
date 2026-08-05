@@ -726,3 +726,39 @@ def test_engine_uses_per_symbol_measured_costs(tmp_path):
 def test_assumed_costs_used_when_no_measured_file():
     cfg = EngineConfig(symbols=("MES",))
     assert not cfg.costs_for("MES").measured
+
+
+# ---------------------------------------------------------------------------
+# Price-source proxy
+# ---------------------------------------------------------------------------
+
+def test_reference_instrument_still_cannot_be_traded_and_says_what_to_do():
+    """
+    The orderable guard must stay. Researching on ES history is a price-source
+    substitution, not a licence to emit ES orders.
+    """
+    with pytest.raises(ValueError, match="price_source instead"):
+        EngineConfig(symbols=("ES",))
+
+
+def test_price_source_keeps_the_traded_instrument_economics():
+    """
+    Prices may come from ES; point value, tick value, and costs must not. ES is worth
+    ten times MES per point, so leaking its economics would inflate every P&L tenfold.
+    """
+    cfg = EngineConfig(symbols=("MES",), price_source="ES")
+    assert cfg.instrument("MES").point_value == 5.00
+    assert cfg.price_source == "ES"
+    # The traded instrument is still the micro, and still orderable.
+    assert cfg.instrument("MES").orderable
+
+
+def test_price_source_must_be_a_known_symbol():
+    with pytest.raises(ValueError, match="unknown price_source"):
+        EngineConfig(symbols=("MES",), price_source="NOTREAL")
+
+
+def test_price_source_is_recorded_in_the_fingerprint():
+    """A proxy run must be identifiable as one from its artefacts alone."""
+    assert EngineConfig(symbols=("MES",), price_source="ES").fingerprint()["price_source"] == "ES"
+    assert EngineConfig(symbols=("MES",)).fingerprint()["price_source"] is None

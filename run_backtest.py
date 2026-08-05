@@ -49,7 +49,16 @@ def split_sessions(sessions: list[date], split: str) -> set[date]:
 
 
 def prepare(data_dir: str, symbol: str, cfg: EngineConfig) -> pd.DataFrame:
-    cont = build_continuous(data_dir, symbol,
+    """
+    Load and featurise price history for one traded instrument.
+
+    When `price_source` is set the BARS come from that symbol while everything else,
+    sizing, costs, P&L, and the orderable guard, stays on `symbol`. That split is the
+    whole point: ES has years more history than the MES data on hand, and the proxy has
+    been measured rather than assumed.
+    """
+    data_symbol = cfg.price_source or symbol
+    cont = build_continuous(data_dir, data_symbol,
                             stop_entries_days_before_expiry=cfg.roll_stop_entries_days)
     bars = resample(cont, cfg.decision_bar_minutes)
     p = cfg.strategy_for(symbol)
@@ -69,6 +78,10 @@ def main(argv=None) -> int:
     ap.add_argument("--measured-costs", type=Path,
                     help="JSON from tools/measure_costs.py. Replaces assumed spreads "
                          "with measured percentiles of the real quoted spread.")
+    ap.add_argument("--price-source",
+                    help="Take price history from this symbol while trading --symbols. "
+                         "Validate the substitution with tools/compare_es_mes.py first. "
+                         "Example: --symbols MES --price-source ES")
     ap.add_argument("--cost-session", default="RTH_OPEN",
                     help="Charge this session's measured spread rather than the all-day "
                          "figure. Leg B fires in the opening hour, which quotes wider "
@@ -95,6 +108,7 @@ def main(argv=None) -> int:
         decision_bar_minutes=args.decision_minutes,
         strategy=StrategyParams(or_minutes=args.or_minutes),
         cost_scenario=args.cost_scenario,
+        price_source=args.price_source,
         measured_costs_path=str(args.measured_costs) if args.measured_costs else None,
         measured_costs_session=(None if args.cost_session.upper() == "ALL"
                                 else args.cost_session),
@@ -107,6 +121,10 @@ def main(argv=None) -> int:
     print(f"engine {__version__} | split={args.split} | "
           f"costs={args.cost_scenario} ({cost_source}) | "
           f"prop={'off' if args.no_prop else 'on'}")
+    if args.price_source:
+        print(f"  PRICES from {args.price_source}, ECONOMICS from "
+              f"{', '.join(args.symbols)}. This is a PROXY run: validate the "
+              f"substitution with tools/compare_es_mes.py before trusting it.")
     if args.measured_costs:
         for sym in args.symbols:
             c = cfg.costs_for(sym)

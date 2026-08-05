@@ -35,11 +35,12 @@ Recorded here before the run, per rule 1. Nothing below has been executed.
 | Field | Value |
 |---|---|
 | Planned date | 2026-08-04 |
-| Instrument | **ES** as a validated proxy for MES signal research |
+| Instrument | **MES**, with prices sourced from **ES** (`--price-source ES`) |
 | Leg | B (ORB) |
 | Parameters | **UNCHANGED** from runs 1-8. Frozen before the new data was seen. |
 | Data | Barchart 1-minute, 13 dated contracts, 2023-08-03 to 2026-08-03 |
 | Costs | `config/measured_costs.json`, measured from **MES** quotes |
+| Economics | MES point value $5.00 and MES tick value $1.25. ES economics are never used. |
 | Split | development only. Validation and lockbox remain untouched. |
 | Expected dev n | ~236 trades at the measured 0.63 trades/session |
 | Expected detection floor | ~0.15R, against ~0.28R on the 11-month sample |

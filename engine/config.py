@@ -262,6 +262,13 @@ class EngineConfig:
     prop: PropRules = field(default_factory=PropRules)
     execution: ExecutionParams = field(default_factory=ExecutionParams)
     cost_scenario: str = "adverse"        # adverse is the default, not base
+    # Load PRICE DATA from a different symbol while keeping this instrument's economics.
+    # Set only after the substitution has been validated: tools/compare_es_mes.py measures
+    # whether the proxy's entry triggers actually match the traded instrument's.
+    #
+    # This is NOT a way around the orderable guard. Orders, sizing, costs, and P&L stay on
+    # the traded micro; only the price history comes from elsewhere.
+    price_source: str | None = None
     measured_costs_path: str | None = None   # when set, spreads come from real quotes
     measured_costs_session: str | None = None  # charge one session's spread, not all-day
     roll_stop_entries_days: int = 5
@@ -277,8 +284,12 @@ class EngineConfig:
             if not INSTRUMENTS[s].orderable:
                 raise ValueError(
                     f"{s} is a reference instrument and cannot be traded. "
-                    "Reference feeds may inform features but never produce orders."
+                    "Reference feeds may inform features but never produce orders. "
+                    "To research on its price history while trading a micro, set "
+                    "price_source instead: symbols=('MES',), price_source='ES'."
                 )
+        if self.price_source is not None and self.price_source not in INSTRUMENTS:
+            raise ValueError(f"unknown price_source {self.price_source!r}")
 
     @property
     def costs(self) -> CostModel:
@@ -321,6 +332,7 @@ class EngineConfig:
             "prop": asdict(self.prop),
             "execution": asdict(self.execution),
             "cost_scenario": self.cost_scenario,
+            "price_source": self.price_source,
             "costs": asdict(self.costs),
             "seed": self.seed,
         }
