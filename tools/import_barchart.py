@@ -73,6 +73,13 @@ COLUMN_ALIASES = {
 # Columns Barchart adds that we deliberately ignore rather than treat as a failure.
 IGNORED_COLUMNS = {"change", "%change", "pct change", "open interest", "symbol"}
 
+# A genuine 09:30 ET opening spike scores far above baseline: real files come in near 19x.
+# To accuse a file of carrying a DIFFERENT timezone, the alternative must itself look like
+# a real opening spike. If no candidate scores well, the file simply has no spike to
+# measure, which is a thin-data problem and not a timezone problem.
+MISMATCH_MIN_ALT_SCORE = 8.0
+WEAK_SPIKE_SCORE = 5.0
+
 
 def parse_symbol(symbol: str) -> tuple[str, str]:
     """'MESM26' -> ('MES', '202606'). Raises on anything unrecognised."""
@@ -357,8 +364,14 @@ def cmd_import(src: Path, out: Path, symbol_override: str | None,
         best_alt_tz, best_alt_score = max(
             ((tz, opening_spike_score(df, tz)) for tz in CANDIDATE_TZ),
             key=lambda kv: (kv[1] if kv[1] == kv[1] else -1.0))
-        if (score == score and best_alt_score == best_alt_score
-                and best_alt_tz != resolved_tz and best_alt_score > 1.5 * score):
+
+        scored = score == score and best_alt_score == best_alt_score   # NaN-safe
+        looks_shifted = (scored and best_alt_tz != resolved_tz
+                         and best_alt_score > 1.5 * score)
+
+        if looks_shifted and best_alt_score >= MISMATCH_MIN_ALT_SCORE:
+            # Another timezone produces a CONVINCING opening spike on this file. That is
+            # a real export-setting mismatch and must not be imported alongside the rest.
             log.error(
                 "%s: scores only %.2fx at 09:30 ET under %s, but %.2fx under %s. This "
                 "file was exported in a DIFFERENT timezone from the others. Import "
@@ -368,6 +381,20 @@ def cmd_import(src: Path, out: Path, symbol_override: str | None,
                 "with --assume-tz %s.",
                 path.name, score, resolved_tz, best_alt_score, best_alt_tz, best_alt_tz)
             return 2
+
+        if scored and score < WEAK_SPIKE_SCORE:
+            # NO timezone produces a convincing spike, so there is no spike here to
+            # measure. Almost always a window where this contract was not the front
+            # month, so RTH volume never dominated. Not a timezone fault: import it and
+            # let the front-month and session-completeness gates judge it downstream.
+            log.warning(
+                "%s: weak opening spike (%.2fx under %s, best alternative %.2fx under "
+                "%s). No timezone produces a convincing 09:30 ET spike, which normally "
+                "means this window predates the contract becoming front month. Importing "
+                "with the resolved timezone; validate_data.py will flag it if the data is "
+                "too thin to use.",
+                path.name, score, resolved_tz, best_alt_score, best_alt_tz)
+            skipped["weak opening spike (imported, flagged)"] += 1
 
         groups[(root, contract_month)].append(
             to_parquet_schema(df, resolved_tz, root, contract_month))

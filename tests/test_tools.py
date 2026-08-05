@@ -585,3 +585,59 @@ def test_es_symbols_parse_to_the_es_root():
     assert parse_symbol("ESH24") == ("ES", "202403")
     assert parse_symbol("ESU23") == ("ES", "202309")
     assert parse_symbol("MESH24") == ("MES", "202403")
+
+
+def _flat_volume_csv(tmp_path, tz_name: str, name: str, days: int = 10) -> Path:
+    """
+    A contract window with NO opening spike, which is what a pre-front-month period
+    looks like: thin, flat volume with no RTH dominance.
+    """
+    from zoneinfo import ZoneInfo
+    et = ZoneInfo("America/New_York")
+    rng = np.random.default_rng(9)
+    rows, d, made = [], pd.Timestamp("2024-01-02"), 0
+    while made < days:
+        if d.weekday() < 5:
+            start = pd.Timestamp(f"{(d - pd.Timedelta(days=1)).date()} 18:00", tz=et)
+            ts = pd.date_range(start, periods=1380, freq="1min", tz=et)
+            px = 4750 + np.cumsum(rng.normal(0, 0.5, len(ts)))
+            local = ts.tz_convert(ZoneInfo(tz_name)).tz_localize(None)
+            rows.append(pd.DataFrame({
+                "Time": local.strftime("%m/%d/%Y %H:%M"),
+                "Open": px.round(2), "High": (px + .5).round(2),
+                "Low": (px - .5).round(2), "Latest": px.round(2),
+                "Volume": rng.integers(1, 5, len(ts))}))     # flat, no spike
+            made += 1
+        d += pd.Timedelta(days=1)
+    path = tmp_path / name
+    with open(path, "w", newline="") as fh:
+        pd.concat(rows, ignore_index=True).to_csv(fh, index=False)
+    return path
+
+
+def test_spikeless_file_is_imported_not_treated_as_a_timezone_mismatch(tmp_path):
+    """
+    A file with no opening spike is a THIN-DATA problem, not a timezone problem.
+
+    The first version aborted the whole import when a pre-front-month window scored
+    1.14x against a 3.09x alternative, claiming a timezone mismatch. Both numbers are
+    weak; real files score near 19x. Accusing a file requires the alternative to look
+    like a genuine spike, not merely a better bad one.
+    """
+    from tools.import_barchart import cmd_import
+    src = tmp_path / "src"; src.mkdir()
+    _barchart_csv(src, "America/Chicago", "ESH24_good.csv")
+    _flat_volume_csv(src, "America/Chicago", "ESM25_thin.csv")
+
+    assert cmd_import(src, tmp_path / "out", None, None, "1min") == 0
+    assert (tmp_path / "out" / "ES" / "ES_202403_1min_TRADES.parquet").exists()
+    assert (tmp_path / "out" / "ES" / "ES_202506_1min_TRADES.parquet").exists()
+
+
+def test_genuine_timezone_shift_still_aborts(tmp_path):
+    """The relaxation must not disarm the guard against a real one-hour shift."""
+    from tools.import_barchart import cmd_import
+    src = tmp_path / "src"; src.mkdir()
+    _barchart_csv(src, "America/New_York", "ESH24_eastern.csv")
+    _barchart_csv(src, "America/Chicago", "ESM24_central.csv")
+    assert cmd_import(src, tmp_path / "out", None, None, "1min") == 2

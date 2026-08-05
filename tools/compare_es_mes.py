@@ -86,6 +86,8 @@ def main(argv=None) -> int:
         micro = prepare(args.data, args.micro, args.decision_minutes, params)
     except FileNotFoundError as exc:
         print(f"ERROR: {exc}")
+        print("\nIf the parent-contract data came from Barchart, import it first:")
+        print("    python tools/import_barchart.py --src <downloads> --out data")
         return 1
 
     merged = parent.merge(micro, on="timestamp_utc", suffixes=("_p", "_m"), how="inner")
