@@ -155,7 +155,11 @@ def main(argv=None) -> int:
 
         result = Backtester(cfg, symbol).run(feats)
         trades = result.trades_frame()
-        metrics = compute_metrics(trades, sessions_in_sample=len(keep))
+        # Rate metrics must divide by the sessions actually REPLAYED. A run that halts
+        # permanently a third of the way through the split would otherwise report a
+        # trade rate a third of the truth, and a no-trade-day share that never happened.
+        observed = result.sessions_processed or len(keep)
+        metrics = compute_metrics(trades, sessions_in_sample=observed)
         ci = block_bootstrap_ci(trades, seed=cfg.seed)
 
         print(format_report(metrics, f"{symbol} | {args.split} | {args.cost_scenario}", ci))
@@ -165,6 +169,14 @@ def main(argv=None) -> int:
                                         key=lambda kv: -kv[1]):
                 print(f"    {reason:<28}{count:>8,}")
         print(f"  final risk state    {result.final_state}")
+        if result.terminated_early:
+            print(f"\n  ** RUN TERMINATED EARLY: {result.final_state} after "
+                  f"{result.sessions_processed} of {len(keep)} split sessions "
+                  f"({result.sessions_processed / len(keep):.0%}). **")
+            print("  The trades above stop at the moment the account died, so they are a")
+            print("  PATH-TRUNCATED sample, not a sample of the split. Expectancy, win")
+            print("  rate, and drawdown are all conditioned on surviving to that point.")
+            print("  For the unconditioned research result, re-run with --no-prop.")
         print()
 
         if not trades.empty:
@@ -186,7 +198,9 @@ def main(argv=None) -> int:
             "metrics": metrics.to_dict(),
             "ci": ci,
             "rejections": result.rejections,
-            "sessions": len(keep),
+            "sessions_in_split": len(keep),
+            "sessions_processed": result.sessions_processed,
+            "terminated_early": result.terminated_early,
             "final_state": result.final_state,
             "provenance": provenance(args.data, symbol),
         }

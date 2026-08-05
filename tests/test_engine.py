@@ -762,3 +762,58 @@ def test_price_source_is_recorded_in_the_fingerprint():
     """A proxy run must be identifiable as one from its artefacts alone."""
     assert EngineConfig(symbols=("MES",), price_source="ES").fingerprint()["price_source"] == "ES"
     assert EngineConfig(symbols=("MES",)).fingerprint()["price_source"] is None
+
+
+# ---------------------------------------------------------------------------
+# Early termination
+# ---------------------------------------------------------------------------
+
+def test_permanent_halt_marks_the_run_as_path_truncated():
+    """
+    When the account breaches the MLL the replay stops, because a dead account cannot
+    keep trading. The result must SAY so: the trades are then a path-truncated sample
+    that stops at the moment of death, not a sample of the period, and every statistic
+    computed from them is conditioned on surviving that far.
+    """
+    from dataclasses import replace
+    feats = compute(_synthetic_market(120, seed=11), or_minutes=30, atr_window=14,
+                    rvol_lookback=20, bar_minutes=5)
+    cfg = EngineConfig(symbols=("MES",))
+    # A tiny buffer guarantees the breach inside the sample.
+    cfg.prop = replace(cfg.prop, mll_buffer=200.0, self_imposed_daily_stop_usd=None)
+
+    result = Backtester(cfg, "MES").run(feats)
+    if result.final_state != "HALTED_PERMANENT":
+        pytest.skip("synthetic sample did not breach")
+
+    assert result.terminated_early
+    assert 0 < result.sessions_processed < feats["session_date"].nunique()
+
+
+def test_a_surviving_run_is_not_flagged_as_truncated():
+    from dataclasses import replace
+    feats = compute(_synthetic_market(40), or_minutes=30, atr_window=14,
+                    rvol_lookback=20, bar_minutes=5)
+    cfg = EngineConfig(symbols=("MES",))
+    cfg.prop = replace(cfg.prop, enabled=False)
+    result = Backtester(cfg, "MES").run(feats)
+    assert not result.terminated_early
+    assert result.sessions_processed == feats["session_date"].nunique()
+
+
+def test_trade_rate_divides_by_sessions_actually_replayed():
+    """
+    Dividing by the full split understates the trade rate by exactly the fraction of the
+    split that never ran. The first ES proxy run reported 0.18 trades/session against a
+    true rate near 0.6 for this reason.
+    """
+    from engine.reporting import compute_metrics
+    trades = pd.DataFrame({
+        "net_usd": [10.0] * 60, "gross_usd": [11.0] * 60, "commission_usd": [1.0] * 60,
+        "risk_usd": [100.0] * 60, "risk_deviation": [0.0] * 60, "bars_held": [5] * 60,
+        "session_date": [date(2026, 3, 1 + i % 100) if i % 100 < 28 else date(2026, 3, 1)
+                         for i in range(60)],
+    })
+    full_split = compute_metrics(trades, sessions_in_sample=400)
+    observed = compute_metrics(trades, sessions_in_sample=100)
+    assert observed.trades_per_day == pytest.approx(4 * full_split.trades_per_day)

@@ -66,6 +66,8 @@ class BacktestResult:
     config_fingerprint: dict = field(default_factory=dict)
     provenance: list[dict] = field(default_factory=list)
     bars_processed: int = 0
+    sessions_processed: int = 0
+    terminated_early: bool = False
     final_state: str = RiskState.ACTIVE.value
 
     def trades_frame(self) -> pd.DataFrame:
@@ -174,7 +176,11 @@ class Backtester:
             })
 
             if self.risk.state in (RiskState.HALTED_PERMANENT, RiskState.HALTED_TARGET):
+                # A breached or completed account cannot keep trading, so the replay
+                # stops here. Everything after this point is UNOBSERVED, which makes the
+                # trade list a path-truncated sample rather than a sample of the split.
                 result.bars_processed = i + 1
+                result.terminated_early = i + 1 < len(rows)
                 break
 
             # ---- 3. execute a signal raised on the PREVIOUS bar ---------
@@ -206,6 +212,8 @@ class Backtester:
             result.trades.append(trade)
 
         self.risk.finish()
+        result.sessions_processed = int(
+            df["session_date"].iloc[:max(result.bars_processed, 1)].nunique())
         result.session_log = self.risk.session_log
         result.equity_curve = pd.DataFrame(equity_rows)
         result.final_state = self.risk.state.value
