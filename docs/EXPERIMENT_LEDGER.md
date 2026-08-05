@@ -17,14 +17,28 @@ easiest way to make a search look more disciplined than it was.
 | 6 | 2026-08-02 | dev | MNQ | B (ORB) | defaults, base | 11 | +31.80 | **NO EVIDENCE**, n too small |
 | 7 | 2026-08-02 | dev | MES | B (ORB) | defaults, adverse, **MEASURED** costs | 72 | +3.60 | **FAILED**, identical to run 1; verdict confirmed on measured costs |
 | 8 | 2026-08-02 | dev | MNQ | B (ORB) | defaults, adverse, **MEASURED** costs | 10 | +41.55 | **NO EVIDENCE**, n too small |
+| 9 | 2026-08-04 | dev | MES via ES prices | B (ORB) | defaults, adverse, measured, **prop ON** | 71 | -15.96 | **ACCOUNT DIED** at 28% of split; path-truncated |
+| 10 | 2026-08-04 | dev | MES via ES prices | B (ORB) | defaults, adverse, measured, **prop OFF** | **264** | **-10.91** | **NEGATIVE EDGE.** First run to clear the 200-trade gate. Loses -613.75 BEFORE any cost. |
 
-**Distinct configurations tried: 1.** Runs 1 to 8 are the same frozen parameter set
-evaluated under three predeclared cost scenarios plus a measured-cost re-run, which is
-robustness checking rather than a search. No parameter has been tuned against a result.
+**Distinct configurations tried: 1.** Runs 1 to 10 are the same frozen parameter set
+evaluated under three predeclared cost scenarios, a measured-cost re-run, and a three-year
+re-run on validated proxy data. That is robustness checking, not a search. **No parameter
+has been tuned against any result at any point.**
 
-**Leg B on this dataset is CLOSED.** The cost question was the last open item capable of
-changing the verdict; measurement confirmed it. Any further work requires either deeper
-history with these rules frozen beforehand, or a different leg registered here first.
+**LEG B IS CLOSED, and not for want of evidence.** Run 10 cleared the 200-trade gate at
+n=264 across three years with measured costs and returned an expectancy of -0.127R. Gross
+of every cost it still loses $613.75, so the cost question that dominated runs 1 to 8 is
+moot: there is no edge for costs to consume. The negative survives removing the best days,
+holds in six of seven contracts, and holds in both directions.
+
+See `RESULTS_DEV_2026-08-04_ES.md`. Further work on Leg B is not justified. A different
+leg must be registered here before it is run.
+
+**Prediction check.** Before run 10 the ledger recorded: "Leg B fails again. The
+concentration failure is a property of what was measured, not of how much." The direction
+was right, the reasoning was half wrong. Concentration was not the mechanism; on the larger
+sample concentration improved (9.2% versus 24.5%) while the result got worse. The 11-month
+sample was not hiding a fragile edge, it was hiding a negative one.
 
 ---
 

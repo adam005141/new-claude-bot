@@ -3,10 +3,11 @@
 Session-aware, evidence-first research project for Micro E-mini S&P 500 (MES) and Micro
 E-mini Nasdaq-100 (MNQ) intraday futures.
 
-> **Status: Leg B tested on development data. FAILED.**
-> MES shows no detectable edge and fails three predeclared gates. MNQ produced 10-11
-> trades, which is not a sample. Validation and lockbox splits are UNTOUCHED.
-> See [`docs/RESULTS_DEV_2026-08-02.md`](docs/RESULTS_DEV_2026-08-02.md).
+> **Status: Leg B CLOSED. Negative edge, measured at n=264 over three years.**
+> Expectancy -0.127R. It loses $613.75 **before any cost at all**, so this is not a
+> cost problem. Robust to removing the best days, holds in six of seven contracts and
+> in both directions. Validation and lockbox splits are UNTOUCHED and there is no case
+> for spending them. See [`docs/RESULTS_DEV_2026-08-04_ES.md`](docs/RESULTS_DEV_2026-08-04_ES.md).
 > There is no live order path and none is planned.
 
 ---
@@ -15,7 +16,8 @@ E-mini Nasdaq-100 (MNQ) intraday futures.
 
 | Document | Purpose |
 |---|---|
-| [`docs/RESULTS_DEV_2026-08-02.md`](docs/RESULTS_DEV_2026-08-02.md) | **The result.** Leg B development verdict and the gates it failed |
+| [`docs/RESULTS_DEV_2026-08-04_ES.md`](docs/RESULTS_DEV_2026-08-04_ES.md) | **The verdict.** Leg B at n=264 over three years: negative edge before costs |
+| [`docs/RESULTS_DEV_2026-08-02.md`](docs/RESULTS_DEV_2026-08-02.md) | The earlier 11-month MES run, superseded but kept for the record |
 | [`docs/EXPERIMENT_LEDGER.md`](docs/EXPERIMENT_LEDGER.md) | Every run, including failures, and which splits are spent |
 | [`docs/EVIDENCE_STATUS.md`](docs/EVIDENCE_STATUS.md) | Environment audit and data-acquisition incidents |
 | [`docs/DATA_SOURCING.md`](docs/DATA_SOURCING.md) | How to obtain usable historical data, including free options |
