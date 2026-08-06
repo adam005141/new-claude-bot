@@ -119,6 +119,8 @@ def simulate(returns: np.ndarray, rules: PropRules, n_sessions: int, trials: int
     """
     lock_at = rules.mll_locks_at + rules.mll_buffer      # balance at which the floor locks
     passed = breached = 0
+    t_pass: list[int] = []
+    t_breach: list[int] = []
     for _ in range(trials):
         # `returns` already has the stop applied per session using the real intraday
         # path. Applying it here, to a bootstrapped series, would be the look-ahead this
@@ -127,19 +129,50 @@ def simulate(returns: np.ndarray, rules: PropRules, n_sessions: int, trials: int
         bal = rules.starting_balance
         floor = rules.starting_balance - rules.mll_buffer
         peak = bal
-        for x in r:
+        for k, x in enumerate(r, start=1):
             qty = ramp_qty if (ramp_qty is not None and peak >= lock_at) else base_qty
             bal += x * qty
             if bal <= floor:
                 breached += 1
+                t_breach.append(k)
                 break
             if bal >= rules.target_balance:
                 passed += 1
+                t_pass.append(k)
                 break
             peak = max(peak, bal)
             floor = min(peak - rules.mll_buffer, rules.mll_locks_at)
     return {"pass": passed / trials, "breach": breached / trials,
-            "neither": 1 - (passed + breached) / trials}
+            "neither": 1 - (passed + breached) / trials,
+            "sessions_to_pass": float(np.mean(t_pass)) if t_pass else float("nan"),
+            "sessions_to_breach": float(np.mean(t_breach)) if t_breach else float("nan")}
+
+
+SESSIONS_PER_MONTH = 21.0
+
+
+def expected_fees(res: dict, fee_upfront: float, fee_monthly: float,
+                  fee_activation: float) -> float:
+    """
+    Expected total fees to reach a FUNDED account, allowing for repeated attempts.
+
+        E = (1-p)/p * cost(failed attempt) + cost(successful attempt) + activation
+
+    This is the objective, and it is not the same as maximising P(pass). A slow grind
+    with a high pass rate pays a monthly subscription for years per attempt; a fast
+    resolution with a mediocre pass rate fails cheaply and starts again. Cheap failure
+    can beat expensive success, and ranking by P(pass) hides that completely.
+
+    Unresolved paths are charged for the whole horizon, since the subscription does not
+    stop just because nothing has happened.
+    """
+    p = res["pass"]
+    if p <= 0:
+        return float("inf")
+    months = lambda n: (n / SESSIONS_PER_MONTH if np.isfinite(n) else 0.0)
+    cost_fail = fee_upfront + fee_monthly * months(res["sessions_to_breach"])
+    cost_pass = fee_upfront + fee_monthly * months(res["sessions_to_pass"])
+    return (1 - p) / p * cost_fail + cost_pass + fee_activation
 
 
 def main(argv=None) -> int:
@@ -159,6 +192,9 @@ def main(argv=None) -> int:
                     help="Horizon in sessions, roughly one year.")
     ap.add_argument("--trials", type=int, default=4000)
     ap.add_argument("--seed", type=int, default=7)
+    ap.add_argument("--fee-upfront", type=float, default=50.0)
+    ap.add_argument("--fee-monthly", type=float, default=50.0)
+    ap.add_argument("--fee-activation", type=float, default=150.0)
     ap.add_argument("--report", type=Path)
     args = ap.parse_args(argv)
 
@@ -269,12 +305,22 @@ def main(argv=None) -> int:
             print(f"  {label:<44}" + "".join(f"{c:>9}" for c in cells))
         print("  each cell is PASS/BREACH")
 
-        # ---- ramp: size up only AFTER the floor locks --------------------
+        # ---- cost to a funded account -----------------------------------
+        #
+        # The objective the fee structure actually implies. Passing inside one month is
+        # arithmetically out of reach: $3,000 over 21 sessions is $143 a session, which at
+        # the measured $6.30 per contract needs 23 contracts, and 23 contracts puts the
+        # session standard deviation at roughly $2,800 against a $2,000 buffer. MES has no
+        # smaller size, so that is a wall rather than a parameter.
+        #
+        # What IS controllable is expected total fees, and it ranks configurations
+        # differently from P(pass): a slow grind pays the monthly subscription for years
+        # per attempt, while a fast resolution fails cheaply and starts again.
         print()
-        print("  RAMP. One contract until the floor LOCKS at +$2,000, then two.")
-        print("  Sizing up from the start doubles exposure through the only dangerous")
-        print("  stretch. Sizing up after the lock applies it to a bounded downside,")
-        print("  because from there the account can lose nothing but earned profit.")
+        print("  EXPECTED COST TO A FUNDED ACCOUNT")
+        print(f"  ${args.fee_upfront:.0f} up front, ${args.fee_monthly:.0f}/month, "
+              f"${args.fee_activation:.0f} on passing, retrying until funded.")
+        print("  Ranked by cost, NOT by P(pass). Cheap failure can beat expensive success.")
         print()
         cfg = top[0]
         lo, hi = WINDOWS[cfg["window"]]
@@ -285,20 +331,35 @@ def main(argv=None) -> int:
         m1 = exc.loc[sel, "mae"].to_numpy() * inst.point_value
         per_contract = (apply_daily_stop(f1, m1, cfg["daily_stop"])
                         - rt_points * inst.point_value)
-        print(f"  {'sizing':<28}{'250':>9}{'500':>9}{'750':>9}{'1000':>9}")
-        for label, base, ramp in (("flat 1 contract", 1, None),
-                                  ("1 then 2 after the lock", 1, 2),
-                                  ("1 then 3 after the lock", 1, 3),
-                                  ("flat 2 contracts", 2, None)):
-            cells = []
-            for h in (250, 500, 750, 1000):
-                r = simulate(per_contract, rules, int(h * frac), args.trials, rng,
-                             base_qty=base, ramp_qty=ramp)
-                cells.append(f"{r['pass']:.0%}/{r['breach']:.0%}")
-            print(f"  {label:<28}" + "".join(f"{c:>9}" for c in cells))
-        print("  each cell is PASS/BREACH, on "
-              f"{cfg['window']} gate {cfg['gate']:.2f} stop "
+
+        plans = [(f"flat {q} contract" + ("s" if q > 1 else ""), q, None)
+                 for q in (1, 2, 3, 4, 6)]
+        plans += [(f"1 then {q} after the lock", 1, q) for q in (2, 3, 4)]
+        plans += [(f"2 then {q} after the lock", 2, q) for q in (4, 6)]
+
+        cost_rows = []
+        for label, base, ramp in plans:
+            r = simulate(per_contract, rules, int(1500 * frac), args.trials, rng,
+                         base_qty=base, ramp_qty=ramp)
+            r["cost"] = expected_fees(r, args.fee_upfront, args.fee_monthly,
+                                      args.fee_activation)
+            r["label"] = label
+            cost_rows.append(r)
+        cost_rows.sort(key=lambda r: r["cost"])
+
+        print(f"  {'sizing plan':<28}{'PASS':>7}{'BREACH':>8}{'mo pass':>9}"
+              f"{'mo fail':>9}{'E[fees]':>10}")
+        for r in cost_rows:
+            mp = r["sessions_to_pass"] / SESSIONS_PER_MONTH
+            mf = r["sessions_to_breach"] / SESSIONS_PER_MONTH
+            print(f"  {r['label']:<28}{r['pass']:>7.0%}{r['breach']:>8.0%}"
+                  f"{mp:>9.1f}{mf:>9.1f}{r['cost']:>10,.0f}")
+        print()
+        print(f"  on {cfg['window']} gate {cfg['gate']:.2f} stop "
               f"{'none' if cfg['daily_stop'] is None else '$%.0f' % cfg['daily_stop']}")
+        cheapest = cost_rows[0]
+        print(f"  CHEAPEST: {cheapest['label']} at ${cheapest['cost']:,.0f} expected, "
+              f"P(pass) {cheapest['pass']:.0%}")
 
     best = max(rows, key=lambda r: r["pass"])
     print()

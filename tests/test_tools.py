@@ -1171,4 +1171,40 @@ def test_ramp_sizing_only_engages_after_the_floor_locks():
     losing = np.array([-30.0] * 400)
     a = simulate(losing, rules, 400, 20, np.random.default_rng(1), base_qty=1)
     b = simulate(losing, rules, 400, 20, np.random.default_rng(1), base_qty=1, ramp_qty=3)
-    assert a == b, "a ramp that never engages must not change the outcome"
+    # Compared field by field: the dicts also carry a NaN time-to-pass, and NaN never
+    # equals itself, so a plain dict comparison would fail for the wrong reason.
+    for k in ("pass", "breach", "neither", "sessions_to_breach"):
+        assert a[k] == b[k], f"a ramp that never engages must not change {k}"
+
+
+def test_expected_fees_prefers_cheap_failure_over_expensive_success():
+    """
+    The inversion the fee structure creates. A 67% pass rate that takes three years per
+    attempt can cost more than a 45% pass rate that resolves in months, because the
+    subscription runs the whole time. Ranking by P(pass) hides this entirely.
+    """
+    from tools.feasibility import SESSIONS_PER_MONTH, expected_fees
+    slow = {"pass": 0.67, "sessions_to_pass": 30 * SESSIONS_PER_MONTH,
+            "sessions_to_breach": 20 * SESSIONS_PER_MONTH}
+    fast = {"pass": 0.45, "sessions_to_pass": 6 * SESSIONS_PER_MONTH,
+            "sessions_to_breach": 4 * SESSIONS_PER_MONTH}
+    c_slow = expected_fees(slow, 50, 50, 150)
+    c_fast = expected_fees(fast, 50, 50, 150)
+    assert c_fast < c_slow, f"fast/cheap should win: ${c_fast:,.0f} vs ${c_slow:,.0f}"
+    assert slow["pass"] > fast["pass"], "and it should win DESPITE a lower pass rate"
+
+
+def test_expected_fees_is_infinite_when_nothing_ever_passes():
+    from tools.feasibility import expected_fees
+    assert expected_fees({"pass": 0.0, "sessions_to_pass": float("nan"),
+                          "sessions_to_breach": 100.0}, 50, 50, 150) == float("inf")
+
+
+def test_simulate_reports_time_to_resolution():
+    from engine.config import PropRules
+    from tools.feasibility import simulate
+    rules = PropRules()
+    # +$300 a session reaches +$3,000 on the tenth session, every time.
+    r = simulate(np.array([300.0] * 60), rules, 60, 30, np.random.default_rng(0))
+    assert r["pass"] == 1.0
+    assert r["sessions_to_pass"] == pytest.approx(10.0)

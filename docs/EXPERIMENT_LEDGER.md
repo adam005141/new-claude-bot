@@ -223,6 +223,30 @@ pricing, which is one of the unresolved items in
 `config/topstep_50k_combine.v1.yaml`, but it is the number the decision turns on rather
 than P(pass).
 
+### The fee structure changes the objective (2026-08-06)
+
+Actual costs: **$50 up front, $50 a month, $150 on passing.** The stated preference is to
+resolve inside one month rather than pay again.
+
+**Passing inside one month is arithmetically impossible, and not as a matter of tuning.**
+$3,000 over 21 sessions is $143 a session. At the measured $6.30 per contract that needs
+23 contracts, whose session standard deviation is roughly $2,800 against a $2,000 buffer,
+so the buffer is 0.7 of one session's noise. MES has no smaller size, so this is a wall.
+
+**The objective therefore becomes expected total fees to reach a funded account**, not
+P(pass):
+
+```
+E[fees] = (1-p)/p * (50 + 50 * months_to_fail) + (50 + 50 * months_to_pass) + 150
+```
+
+That ranks configurations differently, and the difference is large. A slow grind paying a
+subscription for three years per attempt can cost more than a coin flip that resolves in
+months, because a **cheap failure beats an expensive success**. Ranking by P(pass) hides it
+completely. The 67% one-contract plan and the 49% two-contract plan are roughly $2,200 and
+$1,200 on rough duration estimates, which is why the sweep now measures time-to-resolution
+directly instead of guessing it.
+
 **Registered addition: ramp sizing.** The last principled lever, and it comes from the rule
 structure rather than from the data. The MLL floor is `min(peak - buffer, starting
 balance)`, so it LOCKS once the account reaches +$2,000; past that point the account can
