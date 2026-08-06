@@ -22,6 +22,7 @@ easiest way to make a search look more disciplined than it was.
 | 11 | 2026-08-06 | dev | MES via ES prices | **A (VWAP reversion)** | spec defaults, adverse, measured, prop OFF | 177 | **-20.70** | **FAILED**, and below the 200 gate. -0.266R, PF 0.69, loses -1,664.38 before any cost. Target-first rate 29.1% against a 43.4% coin-flip baseline: **mildly anti-predictive**. |
 | 12 | 2026-08-06 | dev | MES via ES prices | screen | forward returns, 460 cells, overnight family added | n/a | n/a | **NOT SIGNIFICANT**, family-wise p 0.375 to 0.770 across three null constructions. Best cell was `gap_vs_on_range` at 120 min, 2.41x cost, in the gap-fade direction. |
 | 13 | 2026-08-06 | dev | MES via ES prices | **C (gap fade)** | registered defaults, adverse, measured, prop OFF | **236** | **-33.03** | **FAILED, worst of the three.** -0.432R, PF 0.57, CI [-49.97, -15.52] excludes zero. Negative in **all seven** contracts and both directions. Clears the 200 gate. |
+| 19 | 2026-08-06 | dev+val | MES via ES prices | feasibility sweep | 36 configs, block bootstrap, real Topstep rules | n/a | n/a | **NO CONFIGURATION PASSES RELIABLY.** Best P(pass) 49.2% against P(breach) 49.9%. Best pass:breach ratio is 1.53 at 31.2%/20.4%. **In-sample and optimistic.** |
 | 18 | 2026-08-06 | dev | MES via ES prices | D (overnight hold) | 1 contract, **prop OFF**, unconditioned | 353 | +9.44 | Unconditioned dev result. PF 1.26, CI [-3.06, +21.75] straddles zero. |
 | 17 | 2026-08-06 | **VALIDATION** | MES via ES prices | **D (overnight hold)** | frozen from run 16, 1 contract, prop ON | 25 | **-49.05** | **ALL THREE PRE-REGISTERED CRITERIA FAILED. ACCOUNT DIED at session 25 of 232 (11%).** Shape INVERTED: validation overnight +0.87 pts (net -$0.61/sess) while RTH earned +1.67. **LEG D CLOSED.** |
 | 16 | 2026-08-06 | dev | MES via ES prices | **D (overnight hold)** | registered defaults, 1 contract, adverse, measured, **prop ON** | 299 | **+10.18** | **PASSED THE COMBINE.** Target hit at session 327/387. PF 1.29, Sharpe 1.42, MDD $1,082 (54% of buffer). **But CI [-2.85, +22.72] straddles zero.** |
@@ -165,6 +166,45 @@ stretches carry into the simulation.
 volatility gate helps survival while pushing the target out of reach inside a year. If that
 holds, the honest conclusion is that the $2,000 buffer cannot support one MES contract, and
 the constraint is the account rather than the strategy.
+
+### Result: prediction correct, and one bug caught on the way
+
+**The first sweep was wrong and reported a 100% pass rate.** The daily stop was applied as
+`max(final_return, -cap)`, which floors the session's FINAL return and therefore keeps
+every session that traded through the stop intraday and recovered by the close. Measured on
+the real moments that look-ahead was worth about **$40 a session against an $8.68 edge**,
+and it turned a -$12.57 configuration into +$75.92. Fixed by modelling the stop against
+each session's actual maximum adverse excursion. Regression tests build sessions as real
+random walks and pin optional stopping: a driftless walk's mean is unchanged by a stop and
+a positive-drift walk's mean strictly falls.
+
+**Corrected result. Nothing passes reliably.**
+
+| configuration | $/session | P(pass) | P(breach) |
+|---|---:|---:|---:|
+| GLOBEX, no gate, no stop, 1ct | 5.06 | 30.0% | 39.3% |
+| **GLOBEX, no gate, $150 stop, 1ct** | 6.30 | **31.2%** | **20.4%** |
+| GLOBEX, no gate, $300 stop, 2ct | 13.80 | 49.2% | 49.9% |
+| FULL_SESSION, no gate, no stop, 1ct | 8.68 | 39.2% | 60.1% |
+
+**Two findings that are real rather than artefacts.**
+
+1. **A $150 per-session loss cap nearly halves ruin, 39.3% to 20.4%, with P(pass)
+   unchanged.** Its effect on expectancy is 0.22 standard errors, which is not measurable
+   on 619 sessions. This is the one genuine improvement available: it buys survival at no
+   detectable cost.
+2. **The volatility gate destroys the edge.** FULL_SESSION drops to -$1.76 a session at
+   gate 0.60 and -$6.32 at 0.40. That is what the mechanism predicts: a risk premium pays
+   in proportion to risk, so filtering out volatility filters out the compensation. Trading
+   only calm sessions is closed on evidence, not opinion.
+
+**Registered addition: horizon sensitivity.** The one lever not yet swept. At $5-6 a
+session, 250 sessions yields $1,250-1,575 against a $3,000 target, so most paths end in
+neither verdict. Topstep imposes no time limit, and the MLL floor LOCKS at the starting
+balance once the account is +$2,000, after which it can only give back profit already
+earned. Time should therefore help asymmetrically. **Prediction: P(pass) rises materially
+with horizon while P(breach) rises much less, because the lock makes the first $2,000 the
+only genuinely dangerous stretch.**
 
 ---
 

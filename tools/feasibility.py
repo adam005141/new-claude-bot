@@ -216,6 +216,47 @@ def main(argv=None) -> int:
                           f"{len(sel):>8}{x.mean():>9.2f}{x.std(ddof=1):>8.0f}"
                           f"{hit_rate:>8.0%}{res['pass']:>8.1%}{res['breach']:>8.1%}")
 
+    # ---- horizon sensitivity -------------------------------------------------
+    #
+    # The single lever not in the table above. At $5-6 a session, 250 sessions produces
+    # $1,250-1,575 against a $3,000 target, so most paths end in "neither" rather than in
+    # a verdict. Topstep no longer imposes a time limit, which makes patience a real and
+    # free lever in a way that sizing up is not.
+    #
+    # The trailing MLL makes this asymmetric rather than a simple race. The floor is
+    # min(peak - buffer, starting balance), so once the balance reaches +$2,000 the floor
+    # LOCKS at the starting balance and never rises again. Past that point the account can
+    # only lose profit it has already made, and the remaining $1,000 is far easier than the
+    # first $2,000. Time helps disproportionately once that milestone is cleared.
+    ranked = sorted(rows, key=lambda r: -(r["pass"] / max(r["breach"], 1e-9)))
+    top = [r for r in ranked if r["pass"] > 0.10][:3]
+    if top:
+        print()
+        print("  HORIZON SENSITIVITY for the best pass-to-breach configurations.")
+        print("  Topstep imposes no time limit, so this is a free lever. The MLL floor")
+        print("  LOCKS at the starting balance once the account is +$2,000, after which it")
+        print("  can only give back profit already earned.")
+        print()
+        print(f"  {'config':<44}{'250':>9}{'500':>9}{'750':>9}{'1000':>9}")
+        for cfg in top:
+            lo, hi = WINDOWS[cfg["window"]]
+            exc = window_excursion(feats, mso, lo, hi)
+            sel = exc.index[rv.reindex(exc.index).fillna(1.0) <= cfg["gate"]]
+            frac = len(sel) / len(exc)
+            final = exc.loc[sel, "final"].to_numpy() * inst.point_value * cfg["qty"]
+            mae = exc.loc[sel, "mae"].to_numpy() * inst.point_value * cfg["qty"]
+            x = (apply_daily_stop(final, mae, cfg["daily_stop"])
+                 - rt_points * inst.point_value * cfg["qty"])
+            stop_lbl = "none" if cfg["daily_stop"] is None else f"${cfg['daily_stop']:.0f}"
+            label = (f"{cfg['window']} g{cfg['gate']:.2f} {stop_lbl} x{cfg['qty']}")
+            cells = []
+            for h in (250, 500, 750, 1000):
+                r = simulate(x, rules, int(h * frac), args.trials, rng)
+                cells.append(f"{r['pass']:.0%}/{r['breach']:.0%}")
+                cfg[f"h{h}"] = r
+            print(f"  {label:<44}" + "".join(f"{c:>9}" for c in cells))
+        print("  each cell is PASS/BREACH")
+
     best = max(rows, key=lambda r: r["pass"])
     print()
     print(f"  BEST P(pass): {best['pass']:.1%} at {best['window']}, gate "
