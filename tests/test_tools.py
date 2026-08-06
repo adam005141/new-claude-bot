@@ -1149,3 +1149,26 @@ def test_the_old_floor_would_have_created_money():
         f"{invented:+.2f}")
     assert correct.mean() < floored.mean() - 15.0, (
         f"the path-aware version must not: {correct.mean():+.2f} vs {floored.mean():+.2f}")
+
+
+def test_ramp_sizing_only_engages_after_the_floor_locks():
+    """
+    The MLL floor is min(peak - buffer, starting balance), so it LOCKS once the peak
+    reaches starting + buffer. Past that the account can only lose profit already earned,
+    which is what makes sizing up there different in kind from sizing up at the start.
+    """
+    from engine.config import PropRules
+    from tools.feasibility import simulate
+    rules = PropRules()
+    # Steady small wins: reaches the lock, then the ramp should shorten the remaining path.
+    r = np.array([120.0] * 400)
+    flat = simulate(r, rules, 400, 20, np.random.default_rng(0), base_qty=1)
+    ramp = simulate(r, rules, 400, 20, np.random.default_rng(0), base_qty=1, ramp_qty=3)
+    assert flat["pass"] == 1.0 and ramp["pass"] == 1.0
+
+    # A path that never reaches the lock must be identical with and without a ramp,
+    # because the ramp can never engage.
+    losing = np.array([-30.0] * 400)
+    a = simulate(losing, rules, 400, 20, np.random.default_rng(1), base_qty=1)
+    b = simulate(losing, rules, 400, 20, np.random.default_rng(1), base_qty=1, ramp_qty=3)
+    assert a == b, "a ramp that never engages must not change the outcome"

@@ -198,6 +198,40 @@ a positive-drift walk's mean strictly falls.
    in proportion to risk, so filtering out volatility filters out the compensation. Trading
    only calm sessions is closed on evidence, not opinion.
 
+### Horizon result: time helps at one contract, and not at two
+
+| config | 250 | 500 | 750 | 1000 |
+|---|---|---|---|---|
+| GLOBEX $150 stop, 1 contract | 30%/21% | 58%/32% | 66%/32% | **67%/32%** |
+| GLOBEX $300 stop, 2 contracts | 48%/51% | 50%/50% | 51%/49% | 50%/50% |
+
+**Sizing up does not convert time into edge; it converts it into a coin flip that stays a
+coin flip forever.** One contract with a $150 cap converges to roughly **2:1 in favour**
+and stops improving after about 750 sessions, or three years.
+
+**And the economics close it.** At $6.30 a session and 250 sessions a year:
+
+| | |
+|---|---:|
+| Gross earnings, 1 contract | **$131/month**, $1,575/year |
+| Sessions to the $3,000 target | 476, about **1.9 years** |
+| **Break-even evaluation fee** | **$131/month** |
+
+Above roughly $131 a month in evaluation fees, the strategy loses money **even on the 67%
+of paths where it passes.** That figure needs checking against Topstep's actual current
+pricing, which is one of the unresolved items in
+`config/topstep_50k_combine.v1.yaml`, but it is the number the decision turns on rather
+than P(pass).
+
+**Registered addition: ramp sizing.** The last principled lever, and it comes from the rule
+structure rather than from the data. The MLL floor is `min(peak - buffer, starting
+balance)`, so it LOCKS once the account reaches +$2,000; past that point the account can
+lose nothing but profit it has already earned. Sizing up from the start doubles exposure
+through the only genuinely dangerous stretch, which the table above shows is fatal. Sizing
+up only AFTER the lock applies the larger size to a bounded downside. **Prediction: the
+ramp raises P(pass) and shortens the path without materially raising P(breach), because the
+first $2,000 is still traded at one contract.**
+
 **Registered addition: horizon sensitivity.** The one lever not yet swept. At $5-6 a
 session, 250 sessions yields $1,250-1,575 against a $3,000 target, so most paths end in
 neither verdict. Topstep imposes no time limit, and the MLL floor LOCKS at the starting

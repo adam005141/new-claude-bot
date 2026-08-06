@@ -101,14 +101,23 @@ def apply_daily_stop(final_usd: np.ndarray, mae_usd: np.ndarray,
 
 
 def simulate(returns: np.ndarray, rules: PropRules, n_sessions: int, trials: int,
-             rng, daily_stop: float | None = None) -> dict:
+             rng, daily_stop: float | None = None, base_qty: int = 1,
+             ramp_qty: int | None = None) -> dict:
     """
     Replay the Topstep rules over bootstrapped session P&L.
 
-    The trailing MLL ratchets on end-of-day balance and locks at the starting balance, so
-    reaching +$2,000 is the milestone that makes the account structurally safe: past it the
-    floor never rises again and every further dollar of profit is pure buffer.
+    `returns` is PER CONTRACT. The trailing MLL ratchets on end-of-day balance and locks at
+    the starting balance, so reaching +$2,000 is the milestone that makes the account
+    structurally safe: past it the floor never rises again and every further dollar of
+    profit is pure buffer.
+
+    `ramp_qty` exploits exactly that. Sizing up from the start doubles the exposure through
+    the only genuinely dangerous stretch, which the sweep shows converts a 2:1 edge into a
+    permanent coin flip. Sizing up only AFTER the floor has locked is a different bet: from
+    there the account can lose nothing but profit it has already earned, so the larger size
+    is applied to a bounded downside rather than to the buffer.
     """
+    lock_at = rules.mll_locks_at + rules.mll_buffer      # balance at which the floor locks
     passed = breached = 0
     for _ in range(trials):
         # `returns` already has the stop applied per session using the real intraday
@@ -119,7 +128,8 @@ def simulate(returns: np.ndarray, rules: PropRules, n_sessions: int, trials: int
         floor = rules.starting_balance - rules.mll_buffer
         peak = bal
         for x in r:
-            bal += x
+            qty = ramp_qty if (ramp_qty is not None and peak >= lock_at) else base_qty
+            bal += x * qty
             if bal <= floor:
                 breached += 1
                 break
@@ -202,8 +212,10 @@ def main(argv=None) -> int:
                     # against the real path, then the round trip charged.
                     final = exc.loc[sel, "final"].to_numpy() * inst.point_value * qty
                     mae = exc.loc[sel, "mae"].to_numpy() * inst.point_value * qty
+                    x = None
                     x = apply_daily_stop(final, mae, stop) - rt_points * inst.point_value * qty
                     res = simulate(x, rules, int(args.sessions * frac), args.trials, rng)
+                    del x
                     hit_rate = (0.0 if stop is None
                                 else float((mae <= -stop).mean()))
                     rows.append({"window": wname, "gate": gate, "daily_stop": stop,
@@ -256,6 +268,37 @@ def main(argv=None) -> int:
                 cfg[f"h{h}"] = r
             print(f"  {label:<44}" + "".join(f"{c:>9}" for c in cells))
         print("  each cell is PASS/BREACH")
+
+        # ---- ramp: size up only AFTER the floor locks --------------------
+        print()
+        print("  RAMP. One contract until the floor LOCKS at +$2,000, then two.")
+        print("  Sizing up from the start doubles exposure through the only dangerous")
+        print("  stretch. Sizing up after the lock applies it to a bounded downside,")
+        print("  because from there the account can lose nothing but earned profit.")
+        print()
+        cfg = top[0]
+        lo, hi = WINDOWS[cfg["window"]]
+        exc = window_excursion(feats, mso, lo, hi)
+        sel = exc.index[rv.reindex(exc.index).fillna(1.0) <= cfg["gate"]]
+        frac = len(sel) / len(exc)
+        f1 = exc.loc[sel, "final"].to_numpy() * inst.point_value
+        m1 = exc.loc[sel, "mae"].to_numpy() * inst.point_value
+        per_contract = (apply_daily_stop(f1, m1, cfg["daily_stop"])
+                        - rt_points * inst.point_value)
+        print(f"  {'sizing':<28}{'250':>9}{'500':>9}{'750':>9}{'1000':>9}")
+        for label, base, ramp in (("flat 1 contract", 1, None),
+                                  ("1 then 2 after the lock", 1, 2),
+                                  ("1 then 3 after the lock", 1, 3),
+                                  ("flat 2 contracts", 2, None)):
+            cells = []
+            for h in (250, 500, 750, 1000):
+                r = simulate(per_contract, rules, int(h * frac), args.trials, rng,
+                             base_qty=base, ramp_qty=ramp)
+                cells.append(f"{r['pass']:.0%}/{r['breach']:.0%}")
+            print(f"  {label:<28}" + "".join(f"{c:>9}" for c in cells))
+        print("  each cell is PASS/BREACH, on "
+              f"{cfg['window']} gate {cfg['gate']:.2f} stop "
+              f"{'none' if cfg['daily_stop'] is None else '$%.0f' % cfg['daily_stop']}")
 
     best = max(rows, key=lambda r: r["pass"])
     print()
