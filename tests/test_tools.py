@@ -883,3 +883,103 @@ def test_signflip_null_still_detects_a_planted_signal():
     obs = max(abs(c["t"]) for c in screen(df, horizons=(1,), n_bins=5))
     null = signflip_null(df, 20, 3, horizons=(1,), n_bins=5)
     assert float((null >= obs).mean()) < 0.05
+
+
+# ---------------------------------------------------------------------------
+# Barrier touch screen. Measures the only quantity that sets the sign of an edge.
+# ---------------------------------------------------------------------------
+
+def _path(closes, highs=None, lows=None, session=0):
+    import datetime as _dt
+    n = len(closes)
+    return pd.DataFrame({
+        "close": np.array(closes, dtype=float),
+        "high": np.array(highs if highs is not None else closes, dtype=float),
+        "low": np.array(lows if lows is not None else closes, dtype=float),
+        "atr": np.full(n, 1.0),
+        "session_date": [_dt.date(2026, 3, 2 + (session if isinstance(session, int)
+                                                else 0))] * n,
+    })
+
+
+def test_first_touch_reports_target_then_stop_correctly():
+    from tools.barrier_screen import first_touch
+    # stop 1x ATR below, target 1x above, ATR = 1.0
+    up = _path([100, 100.5, 101.2])          # reaches +1 before -1
+    assert first_touch(up, 1.0, 1.0, max_bars=5).iloc[0] == 1.0
+    down = _path([100, 99.5, 98.8])
+    assert first_touch(down, 1.0, 1.0, max_bars=5).iloc[0] == 0.0
+
+
+def test_stop_wins_every_tie():
+    """
+    Matches engine.execution: a bar spanning both barriers always resolves to the stop.
+    Keeping the same adverse rule means this screen can never look better than the
+    backtest it is meant to inform.
+    """
+    from tools.barrier_screen import first_touch
+    both = _path([100, 100], highs=[100, 101.5], lows=[100, 98.5])
+    assert first_touch(both, 1.0, 1.0, max_bars=5).iloc[0] == 0.0
+
+
+def test_touch_never_resolves_across_a_session_boundary():
+    from tools.barrier_screen import first_touch
+    import datetime as _dt
+    df = _path([100, 100, 105, 105])
+    df["session_date"] = [_dt.date(2026, 3, 2), _dt.date(2026, 3, 2),
+                          _dt.date(2026, 3, 3), _dt.date(2026, 3, 3)]
+    out = first_touch(df, 1.0, 1.0, max_bars=10)
+    assert pd.isna(out.iloc[0]), "an overnight move must not resolve an intraday barrier"
+
+
+def test_unresolved_paths_are_censored_not_counted_as_losses():
+    from tools.barrier_screen import first_touch
+    flat = _path([100.0] * 10)
+    assert first_touch(flat, 1.0, 1.0, max_bars=5).isna().all()
+
+
+def test_excess_is_measured_against_the_observed_rate_not_the_theoretical_one():
+    """
+    Pinned because getting this wrong manufactures edges. The 24-bar cap censors the
+    FARTHER barrier, so the nearer one is over-represented among resolved outcomes. On a
+    random walk that put the 4.0x/2.0x geometry at 76% against a theoretical 67%. Every
+    bin would have looked strongly positive for a purely mechanical reason.
+    """
+    from tools.barrier_screen import screen
+    rng = np.random.default_rng(5)
+    n = 4000
+    steps = rng.normal(0, 1.0, n)
+    close = 100 + np.cumsum(steps)
+    df = pd.DataFrame({
+        "close": close, "high": close + 0.3, "low": close - 0.3,
+        "atr": np.full(n, 1.0),
+        "session_date": np.repeat(pd.date_range("2026-03-02", periods=n // 50).date, 50),
+        "rvol": rng.normal(0, 1, n),
+    })
+    y = pd.Series(rng.choice([0.0, 1.0], size=n, p=[0.24, 0.76]), index=df.index)
+    cells = screen(df, {(4.0, 2.0): (y, 4.0 / 6.0)})
+    assert cells
+    for c in cells:
+        assert c["baseline"] == pytest.approx(0.76, abs=0.02), "baseline must be OBSERVED"
+        assert c["theory"] == pytest.approx(2 / 3)
+        assert c["censoring_bias"] == pytest.approx(c["baseline"] - c["theory"])
+        # Outcomes are independent of the feature, so no bin should show a real excess.
+        assert abs(c["excess"]) < 0.10
+
+
+def test_barrier_screen_null_is_not_fooled_by_a_random_walk():
+    from tools.barrier_screen import first_touch, rotation_null, screen
+    rng = np.random.default_rng(9)
+    n, per = 6000, 60
+    steps = rng.normal(0, 1.0, n)
+    close = 100 + np.cumsum(steps)
+    df = pd.DataFrame({
+        "close": close, "high": close + abs(rng.normal(0, .4, n)),
+        "low": close - abs(rng.normal(0, .4, n)), "atr": np.full(n, 1.0),
+        "session_date": np.repeat(pd.date_range("2026-03-02", periods=n // per).date, per),
+        "rvol": rng.normal(0, 1, n), "atr_dup": rng.normal(0, 1, n),
+    })
+    touches = {(1.5, 1.5): (first_touch(df, 1.5, 1.5), 0.5)}
+    obs = max(abs(c["z"]) for c in screen(df, touches))
+    null = rotation_null(df, touches, 20, 3)
+    assert float((null >= obs).mean()) > 0.05, "noise screened as a real path edge"

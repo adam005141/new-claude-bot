@@ -20,6 +20,8 @@ easiest way to make a search look more disciplined than it was.
 | 9 | 2026-08-04 | dev | MES via ES prices | B (ORB) | defaults, adverse, measured, **prop ON** | 71 | -15.96 | **ACCOUNT DIED** at 28% of split; path-truncated |
 | 10 | 2026-08-04 | dev | MES via ES prices | B (ORB) | defaults, adverse, measured, **prop OFF** | **264** | **-10.91** | **NEGATIVE EDGE.** First run to clear the 200-trade gate. Loses -613.75 BEFORE any cost. |
 | 11 | 2026-08-06 | dev | MES via ES prices | **A (VWAP reversion)** | spec defaults, adverse, measured, prop OFF | 177 | **-20.70** | **FAILED**, and below the 200 gate. -0.266R, PF 0.69, loses -1,664.38 before any cost. Target-first rate 29.1% against a 43.4% coin-flip baseline: **mildly anti-predictive**. |
+| 12 | 2026-08-06 | dev | MES via ES prices | screen | forward returns, 460 cells, overnight family added | n/a | n/a | **NOT SIGNIFICANT**, family-wise p 0.375 to 0.770 across three null constructions. Best cell was `gap_vs_on_range` at 120 min, 2.41x cost, in the gap-fade direction. |
+| 13 | 2026-08-06 | dev | MES via ES prices | **C (gap fade)** | registered defaults, adverse, measured, prop OFF | **236** | **-33.03** | **FAILED, worst of the three.** -0.432R, PF 0.57, CI [-49.97, -15.52] excludes zero. Negative in **all seven** contracts and both directions. Clears the 200 gate. |
 
 **Distinct configurations tried: 2.** Runs 1 to 10 are the same frozen parameter set
 evaluated under three predeclared cost scenarios, a measured-cost re-run, and a three-year
@@ -27,7 +29,19 @@ re-run on validated proxy data. That is robustness checking, not a search. Run 1
 second and only other configuration. **No parameter has been tuned against any result at
 any point.**
 
-**BOTH LEGS ARE CLOSED.** Leg B is momentum continuation, Leg A is mean reversion. They
+**ALL THREE LEGS ARE CLOSED**, and run 13 produced the arithmetic that closes the
+framework rather than just the leg. For a driftless random walk `P(target first)` and the
+break-even win rate are the SAME expression, `S/(S+T)`, so a random walk breaks even at
+every geometry and **the sign of an edge before costs is decided solely by the gap between
+the realised target-first rate and `S/(S+T)`.** Stop width, target distance,
+reward-to-risk and instrument choice cannot change that sign. Measured: Leg A -14.3pp
+(z=-3.51), Leg C -14.8pp (z=-4.58). Replicated to within half a point across different
+anchors, triggers and sample sizes. See `RESULTS_DEV_2026-08-06_LEGC.md`.
+
+This is why **no wide-stop variant will be run**: the arithmetic states its result in
+advance.
+
+**BOTH EARLIER LEGS ARE CLOSED.** Leg B is momentum continuation, Leg A is mean reversion. They
 are opposite bets on the same series and both lose before costs on the same three years,
 in both directions, in six of seven contracts, and more heavily once the best days are
 removed. See `RESULTS_DEV_2026-08-06_LEGA.md`.
@@ -53,6 +67,45 @@ concentration failure is a property of what was measured, not of how much." The 
 was right, the reasoning was half wrong. Concentration was not the mechanism; on the larger
 sample concentration improved (9.2% versus 24.5%) while the result got worse. The 11-month
 sample was not hiding a fragile edge, it was hiding a negative one.
+
+---
+
+## Registered BEFORE execution: run 14 (barrier touch screen)
+
+Registered before the tool was written. Measurement only: no entry rule, no sizing, no
+P&L, no split beyond development. Not a strategy trial, so the trial count stays at 3.
+
+Every screen so far measured **means**. Run 13 proved that is the wrong statistic:
+`gap_vs_on_range` produced the largest mean effect in the project, 2.41x the round trip
+and pointing the way Leg C bets, while Leg C lost 0.432R trading exactly that. A
+favourable mean with an adverse path is not an edge.
+
+Run 14 measures the quantity that actually decides the sign: conditional on each feature,
+does price touch the favourable barrier before the adverse one more often than an average
+bar does at the same geometry? Five geometries from 1.5x/1.5x to 4.0x/2.0x, so no result
+can be an artefact of one arrangement.
+
+**Design correction made during construction, before any real-data output.** The first
+version compared each bin to the theoretical `S/(S+T)`. Calibration on a synthetic random
+walk showed the unconditional rate at **76.1% against a theoretical 66.7%** for a 4.0x
+stop and 2.0x target, and **29.2% against 33.3%** for the mirror. The cause is the 24-bar
+cap: it censors the FARTHER barrier, so whichever barrier sits nearer is over-represented
+among resolved outcomes. Comparing to theory would have shown a large positive excess in
+every bin of half the geometries for a purely mechanical reason. Cells are now compared to
+the **observed** unconditional rate at the same geometry, which absorbs censoring,
+tie-break drag and drift exactly. The censoring bias is reported separately rather than
+hidden.
+
+**This correction also qualifies the run 11 and 13 shortfall figures.** Both used the
+theoretical baseline. Censoring biases a payoff-above-1 setup downward, so part of the
+-14.3pp and -14.8pp is mechanical. On synthetic data the effect was -1.1pp at 1.5x/3.0x
+and -4.2pp at 2.0x/4.0x, which is a fraction of -14.5pp but not nothing. Run 14's
+unconditional row measures it on the real data, and the shortfall figures should be read
+against that row rather than against theory.
+
+**Prediction:** nothing clears the family-wise null. If that holds, no arrangement of
+stops, targets, instruments or sizing applied to this feature set can be profitable, and
+that is a complete answer rather than another failed leg.
 
 ---
 
@@ -219,7 +272,7 @@ floor. **Third prediction falsified by measurement in this project.**
 
 | Split | Status |
 |---|---|
-| development | used (runs 1-11) |
+| development | used (runs 1-13) |
 | validation | **UNTOUCHED** |
 | lockbox | **UNTOUCHED**, single-use |
 
