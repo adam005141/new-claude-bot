@@ -886,10 +886,11 @@ def test_signflip_null_still_detects_a_planted_signal():
 
 
 # ---------------------------------------------------------------------------
-# Barrier touch screen. Measures the only quantity that sets the sign of an edge.
+# Barrier screen. Measures expectancy in R under fixed barriers, split into the
+# part that is a real path property and the part that is just the bull market.
 # ---------------------------------------------------------------------------
 
-def _path(closes, highs=None, lows=None, session=0):
+def _path(closes, highs=None, lows=None):
     import datetime as _dt
     n = len(closes)
     return pd.DataFrame({
@@ -897,89 +898,128 @@ def _path(closes, highs=None, lows=None, session=0):
         "high": np.array(highs if highs is not None else closes, dtype=float),
         "low": np.array(lows if lows is not None else closes, dtype=float),
         "atr": np.full(n, 1.0),
-        "session_date": [_dt.date(2026, 3, 2 + (session if isinstance(session, int)
-                                                else 0))] * n,
+        "session_date": [_dt.date(2026, 3, 2)] * n,
     })
 
 
-def test_first_touch_reports_target_then_stop_correctly():
-    from tools.barrier_screen import first_touch
-    # stop 1x ATR below, target 1x above, ATR = 1.0
-    up = _path([100, 100.5, 101.2])          # reaches +1 before -1
-    assert first_touch(up, 1.0, 1.0, max_bars=5).iloc[0] == 1.0
+def test_barrier_outcome_pays_the_payoff_ratio_on_a_target_and_minus_one_on_a_stop():
+    from tools.barrier_screen import barrier_outcome_r
+    up = _path([100, 100.5, 102.2])
+    assert barrier_outcome_r(up, 1.0, 2.0, max_bars=5).iloc[0] == pytest.approx(2.0)
     down = _path([100, 99.5, 98.8])
-    assert first_touch(down, 1.0, 1.0, max_bars=5).iloc[0] == 0.0
+    assert barrier_outcome_r(down, 1.0, 2.0, max_bars=5).iloc[0] == pytest.approx(-1.0)
 
 
 def test_stop_wins_every_tie():
-    """
-    Matches engine.execution: a bar spanning both barriers always resolves to the stop.
-    Keeping the same adverse rule means this screen can never look better than the
-    backtest it is meant to inform.
-    """
-    from tools.barrier_screen import first_touch
-    both = _path([100, 100], highs=[100, 101.5], lows=[100, 98.5])
-    assert first_touch(both, 1.0, 1.0, max_bars=5).iloc[0] == 0.0
+    """Matches engine.execution, so this screen can never look better than the backtest."""
+    from tools.barrier_screen import barrier_outcome_r
+    both = _path([100, 100], highs=[100, 103], lows=[100, 98.5])
+    assert barrier_outcome_r(both, 1.0, 2.0, max_bars=5).iloc[0] == pytest.approx(-1.0)
 
 
-def test_touch_never_resolves_across_a_session_boundary():
-    from tools.barrier_screen import first_touch
+def test_unresolved_trades_are_marked_to_market_not_discarded():
+    """
+    The bug this replaced. Dropping unresolved paths censors the FARTHER barrier, and the
+    censoring rate varies by bin because barriers are ATR-scaled. The binary version
+    returned a family-wise p of 0.000 on a pure random walk because of it.
+    """
+    from tools.barrier_screen import barrier_outcome_r
+    drift = _path([100.0, 100.2, 100.4, 100.5])
+    got = barrier_outcome_r(drift, 2.0, 4.0, max_bars=3).iloc[0]
+    assert not pd.isna(got), "an unresolved path must still produce an outcome"
+    assert got == pytest.approx((100.5 - 100.0) / 2.0)
+
+
+def test_outcome_never_resolves_across_a_session_boundary():
+    from tools.barrier_screen import barrier_outcome_r
     import datetime as _dt
     df = _path([100, 100, 105, 105])
     df["session_date"] = [_dt.date(2026, 3, 2), _dt.date(2026, 3, 2),
                           _dt.date(2026, 3, 3), _dt.date(2026, 3, 3)]
-    out = first_touch(df, 1.0, 1.0, max_bars=10)
-    assert pd.isna(out.iloc[0]), "an overnight move must not resolve an intraday barrier"
+    out = barrier_outcome_r(df, 1.0, 1.0, max_bars=10)
+    assert out.iloc[0] == pytest.approx(0.0), "must mark out at the session end, not carry"
+    assert pd.isna(out.iloc[1]), "no forward bar in-session means no trade at all"
 
 
-def test_unresolved_paths_are_censored_not_counted_as_losses():
-    from tools.barrier_screen import first_touch
-    flat = _path([100.0] * 10)
-    assert first_touch(flat, 1.0, 1.0, max_bars=5).isna().all()
+def test_decompose_separates_a_path_property_from_plain_drift():
+    from tools.barrier_screen import decompose
+    # Pure drift: long gains exactly what short loses.
+    path, drift = decompose(+0.10, -0.10)
+    assert path == pytest.approx(0.0) and drift == pytest.approx(0.10)
+    # Pure path property: both sides move together.
+    path, drift = decompose(+0.08, +0.08)
+    assert path == pytest.approx(0.08) and drift == pytest.approx(0.0)
 
 
-def test_excess_is_measured_against_the_observed_rate_not_the_theoretical_one():
+def test_a_pure_uptrend_registers_as_drift_and_not_as_a_path_edge():
     """
-    Pinned because getting this wrong manufactures edges. The 24-bar cap censors the
-    FARTHER barrier, so the nearer one is over-represented among resolved outcomes. On a
-    random walk that put the 4.0x/2.0x geometry at 76% against a theoretical 67%. Every
-    bin would have looked strongly positive for a purely mechanical reason.
+    The confound this whole decomposition exists for. The development split is a
+    2023-2025 equity bull market, so a long-only screen finds drift and calls it a signal.
     """
-    from tools.barrier_screen import screen
-    rng = np.random.default_rng(5)
+    from tools.barrier_screen import barrier_outcome_r, decompose
+    rng = np.random.default_rng(4)
     n = 4000
-    steps = rng.normal(0, 1.0, n)
-    close = 100 + np.cumsum(steps)
+    close = 100 + np.cumsum(rng.normal(0, 1.0, n)) + np.linspace(0, 60, n)
+    df = pd.DataFrame({
+        "close": close, "high": close + 0.3, "low": close - 0.3,
+        "atr": np.full(n, 1.0),
+        "session_date": np.repeat(pd.date_range("2026-03-02", periods=n // 50).date, 50),
+    })
+    long_r = barrier_outcome_r(df, 2.0, 2.0, side="long").mean()
+    short_r = barrier_outcome_r(df, 2.0, 2.0, side="short").mean()
+    path, drift = decompose(long_r, short_r)
+    assert long_r > 0.01, "the uptrend should look profitable to a long-only measure"
+    assert drift > 0.01, "and it must be attributed to drift"
+    assert abs(path) < 0.2 * drift, (
+        f"path must be a small fraction of drift, got path={path:+.4f} drift={drift:+.4f}")
+
+
+def test_asymmetric_geometries_leak_drift_into_path_and_are_excluded():
+    """
+    Why SYMMETRIC carries the headline. With a payoff of 2 a winning long pays +2R while a
+    losing short pays only -1R, so a purely directional move does not cancel. Found in
+    calibration, at the same magnitude as anything worth discovering.
+    """
+    from tools.barrier_screen import barrier_outcome_r, decompose, screen
+    rng = np.random.default_rng(4)
+    n = 4000
+    close = 100 + np.cumsum(rng.normal(0, 1.0, n)) + np.linspace(0, 60, n)
     df = pd.DataFrame({
         "close": close, "high": close + 0.3, "low": close - 0.3,
         "atr": np.full(n, 1.0),
         "session_date": np.repeat(pd.date_range("2026-03-02", periods=n // 50).date, 50),
         "rvol": rng.normal(0, 1, n),
     })
-    y = pd.Series(rng.choice([0.0, 1.0], size=n, p=[0.24, 0.76]), index=df.index)
-    cells = screen(df, {(4.0, 2.0): (y, 4.0 / 6.0)})
-    assert cells
-    for c in cells:
-        assert c["baseline"] == pytest.approx(0.76, abs=0.02), "baseline must be OBSERVED"
-        assert c["theory"] == pytest.approx(2 / 3)
-        assert c["censoring_bias"] == pytest.approx(c["baseline"] - c["theory"])
-        # Outcomes are independent of the feature, so no bin should show a real excess.
-        assert abs(c["excess"]) < 0.10
+    sym = decompose(*[barrier_outcome_r(df, 2.0, 2.0, side=s).mean()
+                      for s in ("long", "short")])
+    asym = decompose(*[barrier_outcome_r(df, 2.0, 4.0, side=s).mean()
+                       for s in ("long", "short")])
+    assert abs(sym[0]) < abs(asym[0]), "the asymmetric geometry must leak more"
+
+    touches = {(2.0, 2.0): {"long": barrier_outcome_r(df, 2.0, 2.0, side="long"),
+                            "short": barrier_outcome_r(df, 2.0, 2.0, side="short"),
+                            "theory": 0.5},
+               (2.0, 4.0): {"long": barrier_outcome_r(df, 2.0, 4.0, side="long"),
+                            "short": barrier_outcome_r(df, 2.0, 4.0, side="short"),
+                            "theory": 1 / 3}}
+    assert all(c["symmetric"] for c in screen(df, touches)), \
+        "asymmetric geometries must not reach the headline statistic"
 
 
 def test_barrier_screen_null_is_not_fooled_by_a_random_walk():
-    from tools.barrier_screen import first_touch, rotation_null, screen
+    from tools.barrier_screen import barrier_outcome_r, rotation_null, screen
     rng = np.random.default_rng(9)
     n, per = 6000, 60
-    steps = rng.normal(0, 1.0, n)
-    close = 100 + np.cumsum(steps)
+    close = 100 + np.cumsum(rng.normal(0, 1.0, n))
     df = pd.DataFrame({
         "close": close, "high": close + abs(rng.normal(0, .4, n)),
         "low": close - abs(rng.normal(0, .4, n)), "atr": np.full(n, 1.0),
         "session_date": np.repeat(pd.date_range("2026-03-02", periods=n // per).date, per),
-        "rvol": rng.normal(0, 1, n), "atr_dup": rng.normal(0, 1, n),
+        "rvol": rng.normal(0, 1, n), "rv_pct": rng.normal(0, 1, n),
     })
-    touches = {(1.5, 1.5): (first_touch(df, 1.5, 1.5), 0.5)}
+    touches = {(1.5, 1.5): {"long": barrier_outcome_r(df, 1.5, 1.5, side="long"),
+                            "short": barrier_outcome_r(df, 1.5, 1.5, side="short"),
+                            "theory": 0.5}}
     obs = max(abs(c["z"]) for c in screen(df, touches))
     null = rotation_null(df, touches, 20, 3)
     assert float((null >= obs).mean()) > 0.05, "noise screened as a real path edge"
