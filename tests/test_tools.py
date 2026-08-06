@@ -641,3 +641,74 @@ def test_genuine_timezone_shift_still_aborts(tmp_path):
     _barchart_csv(src, "America/New_York", "ESH24_eastern.csv")
     _barchart_csv(src, "America/Chicago", "ESM24_central.csv")
     assert cmd_import(src, tmp_path / "out", None, None, "1min") == 2
+
+
+# ---------------------------------------------------------------------------
+# Cost hurdle: the identity that quantity cancels
+# ---------------------------------------------------------------------------
+
+def test_cost_hurdle_identity_matches_the_engines_own_sizing():
+    """
+    cost_in_R = round_trip_points / stop_points is claimed to be EXACT, not approximate.
+    If integer rounding or the contract cap leaked into it the whole analysis would be
+    wrong, so it is checked against size_position rather than asserted.
+    """
+    from engine.config import MES, MNQ, COST_ADVERSE, RiskParams
+    from engine.sizing import size_position
+    from tools.cost_hurdle import cost_in_r
+
+    risk = RiskParams()
+    checked = 0
+    for inst in (MES, MNQ):
+        rt_points = COST_ADVERSE.round_trip_points(inst)
+        for stop_pts in (2.0, 4.0, 6.5, 8.8, 13.0, 20.0, 26.0):
+            s = size_position(stop_pts, inst, risk)
+            if not s.ok:
+                continue
+            empirical = (s.quantity * COST_ADVERSE.round_trip_usd(inst)) / s.total_risk_usd
+            assert empirical == pytest.approx(cost_in_r(rt_points, stop_pts), abs=1e-12), (
+                f"{inst.symbol} at {stop_pts} points: identity broke")
+            checked += 1
+    assert checked >= 10, "the sweep must actually exercise several sizes"
+
+
+def test_wider_stops_lower_the_hurdle_proportionally():
+    from tools.cost_hurdle import cost_in_r
+    assert cost_in_r(0.99, 20.0) == pytest.approx(cost_in_r(0.99, 10.0) / 2)
+
+
+def test_hurdle_table_refuses_geometries_the_engine_would_refuse():
+    """
+    A table that recommends a stop size_position rejects would be worse than useless. The
+    refusal point is where one contract exceeds the R budget.
+    """
+    from engine.config import MES, COST_ADVERSE, RiskParams
+    from engine.sizing import size_position
+    from tools.cost_hurdle import report
+
+    risk = RiskParams()
+    # Median ATR of 10 points puts the wider multiples past the MES refusal point of
+    # r_target / point_value = 100 / 5 = 20 points.
+    rows = report(MES, COST_ADVERSE, pd.Series([10.0] * 50), risk)
+    assert any(not r["tradable"] for r in rows), "sweep must reach the refusal point"
+    for r in rows:
+        engine_says_ok = size_position(r["stop_points"], MES, risk).ok
+        assert r["tradable"] == engine_says_ok, (
+            f"table and engine disagree at {r['stop_points']:.1f} points")
+
+
+def test_cheapest_instrument_in_dollars_need_not_be_cheapest_in_R():
+    """
+    The measured finding was that MNQ costs MORE per contract in dollars. In R it can
+    still be cheaper, because its point moves are larger relative to its tick. This is the
+    claim the tool exists to make checkable, so it is pinned here.
+    """
+    from engine.config import MES, MNQ, COST_ADVERSE
+    from tools.cost_hurdle import cost_in_r
+
+    # Same stop expressed in each instrument's own ATR units: ES 5-min ATR near 6 points,
+    # NQ near 3.4x that. Illustrative multiples, not measurements.
+    mes = cost_in_r(COST_ADVERSE.round_trip_points(MES), 1.5 * 6.0)
+    mnq = cost_in_r(COST_ADVERSE.round_trip_points(MNQ), 1.5 * 20.4)
+    assert COST_ADVERSE.round_trip_usd(MNQ) < COST_ADVERSE.round_trip_usd(MES)
+    assert mnq < mes, "MNQ should be cheaper in R at comparable ATR multiples"
