@@ -247,6 +247,42 @@ completely. The 67% one-contract plan and the 49% two-contract plan are roughly 
 $1,200 on rough duration estimates, which is why the sweep now measures time-to-resolution
 directly instead of guessing it.
 
+### Cost-to-funded result, and a correction to my own reasoning
+
+| plan | PASS | luck only | LIFT | months to pass | E[fees] |
+|---|---:|---:|---:|---:|---:|
+| flat 6 contracts | 39% | 29% | +10% | 0.7 | **$361** |
+| flat 3 contracts | 42% | 28% | +14% | 2.0 | $488 |
+| flat 1 contract | 68% | 24% | **+44%** | 14.6 | $1,217 |
+
+**Correction.** I argued that 39% at six contracts was pure gambler's ruin, on the grounds
+that a fixed floor gives `buffer/(buffer+target)` = 2000/5000 = 40%. **That baseline is
+wrong for this account.** The Topstep MLL TRAILS: it ratchets up on every new peak, so a
+$2,000 drawdown from a high kills the account even while it is still in profit. Measured
+driftless, that costs more than ten percentage points, putting luck alone at **24-29%
+rather than 40%**. Six contracts is therefore a real +10 point lift, not decoration. The
+claim was wrong; the direction it pointed was not.
+
+**The `luck only` column is now computed by the tool**, by re-running each plan with the
+mean removed and everything else, volatility, fat tails and clustering, left intact. Any
+plan whose lift is near zero is a coin flip with a backtest attached.
+
+**What the table actually says.** Sizing up shortens the horizon faster than the edge
+accumulates, because drift grows with n while noise grows with sqrt(n). The edge is worth
+0.89 standard deviations over a one-contract path and 0.19 over a six-contract one. So
+cheap plans are cheap because they resolve before the edge can matter.
+
+**The decision reduces to one unknown.** Break-even value of a funded account between the
+two ends of the table:
+
+```
+0.68V - 1,217  =  0.39V - 361     ->     V = $2,952
+```
+
+Worth more than about $2,950 and the slow one-contract plan wins; worth less and the fast
+six-contract plan does. That is the number to argue about, and it is not a property of the
+data.
+
 **Registered addition: ramp sizing.** The last principled lever, and it comes from the rule
 structure rather than from the data. The MLL floor is `min(peak - buffer, starting
 balance)`, so it LOCKS once the account reaches +$2,000; past that point the account can

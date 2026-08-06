@@ -336,23 +336,43 @@ def main(argv=None) -> int:
         plans += [(f"1 then {q} after the lock", 1, q) for q in (2, 3, 4)]
         plans += [(f"2 then {q} after the lock", 2, q) for q in (4, 6)]
 
+        # The EDGE-FREE control. Same series with the mean removed, so identical
+        # volatility, identical fat tails, identical clustering, and zero drift. The
+        # difference in P(pass) is what the strategy actually contributes.
+        #
+        # For a driftless walk, gambler's ruin gives P(pass) = buffer/(buffer+target) =
+        # 2000/5000 = 40% regardless of size. Any configuration sitting at 40% is a coin
+        # flip wearing a strategy's name, and sizing up moves everything toward it: the
+        # drift's contribution over a path scales as mu*sqrt(n)/sd, which shrinks as size
+        # grows because the horizon shortens faster than the edge accumulates.
+        edge_free = per_contract - per_contract.mean()
+
         cost_rows = []
         for label, base, ramp in plans:
             r = simulate(per_contract, rules, int(1500 * frac), args.trials, rng,
                          base_qty=base, ramp_qty=ramp)
+            null = simulate(edge_free, rules, int(1500 * frac), args.trials, rng,
+                            base_qty=base, ramp_qty=ramp)
             r["cost"] = expected_fees(r, args.fee_upfront, args.fee_monthly,
                                       args.fee_activation)
+            r["pass_no_edge"] = null["pass"]
+            r["edge_lift"] = r["pass"] - null["pass"]
             r["label"] = label
             cost_rows.append(r)
         cost_rows.sort(key=lambda r: r["cost"])
 
-        print(f"  {'sizing plan':<28}{'PASS':>7}{'BREACH':>8}{'mo pass':>9}"
-              f"{'mo fail':>9}{'E[fees]':>10}")
+        print(f"  {'sizing plan':<28}{'PASS':>7}{'no edge':>9}{'LIFT':>7}"
+              f"{'mo pass':>9}{'mo fail':>9}{'E[fees]':>10}")
         for r in cost_rows:
             mp = r["sessions_to_pass"] / SESSIONS_PER_MONTH
             mf = r["sessions_to_breach"] / SESSIONS_PER_MONTH
-            print(f"  {r['label']:<28}{r['pass']:>7.0%}{r['breach']:>8.0%}"
-                  f"{mp:>9.1f}{mf:>9.1f}{r['cost']:>10,.0f}")
+            print(f"  {r['label']:<28}{r['pass']:>7.0%}{r['pass_no_edge']:>9.0%}"
+                  f"{r['edge_lift']:>+7.0%}{mp:>9.1f}{mf:>9.1f}{r['cost']:>10,.0f}")
+        print()
+        print("  `no edge` repeats each plan with the mean removed: same volatility, same")
+        print("  tails, zero drift. `LIFT` is what the strategy contributes. A plan whose")
+        print("  lift is near zero is a coin flip that happens to have a backtest attached,")
+        print("  and its cheapness is the cost of the gamble, not of an edge.")
         print()
         print(f"  on {cfg['window']} gate {cfg['gate']:.2f} stop "
               f"{'none' if cfg['daily_stop'] is None else '$%.0f' % cfg['daily_stop']}")

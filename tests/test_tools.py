@@ -1254,3 +1254,52 @@ def test_session_decomposition_cli_runs_end_to_end(tiny_data, capsys):
     assert main(["--data", str(tiny_data), "--symbols", "MES"]) == 0
     out = capsys.readouterr().out
     assert "GLOBEX_TO_OPEN" in out and "t NET" in out
+
+
+def test_a_trailing_floor_is_far_harsher_than_a_fixed_one():
+    """
+    The control that says what luck alone achieves, and a correction to an assumption I
+    got wrong. Plain gambler's ruin on a FIXED floor gives buffer/(buffer+target) =
+    2000/5000 = 40%. The Topstep MLL TRAILS: it ratchets up on every new peak, so a
+    $2,000 drawdown from a high kills the account even while it is still in profit.
+
+    Measured driftless, that costs more than ten percentage points: about 24-29% rather
+    than 40%. Any comparison against the textbook 40% therefore understates what a
+    strategy is contributing.
+    """
+    from engine.config import PropRules
+    from tools.feasibility import simulate
+    rules = PropRules()
+    rng = np.random.default_rng(11)
+    base = rng.normal(6.30, 124.0, 2000)
+    edge_free = base - base.mean()
+    for qty in (1, 3, 6):
+        r = simulate(edge_free, rules, 4000, 800, rng, base_qty=qty)
+        assert 0.15 < r["pass"] < 0.35, (
+            f"driftless at {qty} contracts should sit well below the fixed-floor 40%, "
+            f"got {r['pass']:.0%}")
+
+
+def test_the_edge_only_reaches_the_outcome_at_small_size():
+    """
+    Sizing up shortens the horizon faster than the edge accumulates, because drift grows
+    with n while noise grows with sqrt(n). The lift over the edge-free control must
+    therefore SHRINK as size rises, which is what makes the fee-cheapest plan the one
+    where the strategy is decoration.
+    """
+    from engine.config import PropRules
+    from tools.feasibility import simulate
+    rules = PropRules()
+    rng = np.random.default_rng(12)
+    base = rng.normal(6.30, 124.0, 3000)
+    edge_free = base - base.mean()
+    lifts = {}
+    for qty in (1, 6):
+        real = simulate(base, rules, 4000, 800, rng, base_qty=qty)
+        null = simulate(edge_free, rules, 4000, 800, rng, base_qty=qty)
+        lifts[qty] = real["pass"] - null["pass"]
+    assert lifts[1] > lifts[6] + 0.10, (
+        f"the edge must matter more at one contract: {lifts[1]:+.0%} vs {lifts[6]:+.0%}")
+    assert lifts[6] > 0.0, (
+        f"but it does NOT vanish at six contracts; an earlier version of this test "
+        f"asserted it did, on a wrong 40% baseline. Measured lift {lifts[6]:+.0%}")
