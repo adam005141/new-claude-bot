@@ -111,6 +111,28 @@ def forward_move_points(df: pd.DataFrame, horizon: int) -> pd.Series:
     return fwd - df["close"]
 
 
+def forward_move_normalised(df: pd.DataFrame, horizon: int) -> pd.Series:
+    """
+    The same forward move divided by ATR at the decision bar.
+
+    A second view of the same question, reported alongside raw points rather than
+    replacing them.
+
+    Most of the screened features are volatility measures, so a raw-points bin sorted on
+    volatility is heteroskedastic by construction: high-volatility bins hold larger moves
+    in both directions. Dividing by ATR at the decision bar makes the target roughly
+    homoskedastic across regimes, which is a cleaner basis for a t-statistic.
+
+    It was originally added on the theory that heteroskedasticity was biasing the null.
+    It was not: see `signflip_null`. Both targets are now reported because they answer
+    slightly different questions and it costs almost nothing to show both.
+
+    Tradability is always read from raw points, never from this, because the round trip is
+    denominated in index points and not in ATR.
+    """
+    return forward_move_points(df, horizon) / df["atr"].replace(0.0, np.nan)
+
+
 def cell_stats(x: pd.Series, y: pd.Series, n_bins: int) -> list[dict]:
     """Mean forward move within each quantile bin of a feature."""
     ok = x.notna() & y.notna()
@@ -154,11 +176,19 @@ def categorical_stats(x: pd.Series, y: pd.Series) -> list[dict]:
     return out
 
 
-def screen(df: pd.DataFrame, horizons=HORIZONS, n_bins: int = N_BINS) -> list[dict]:
+def targets(df: pd.DataFrame, horizons, normalise: bool) -> dict[int, pd.Series]:
+    fn = forward_move_normalised if normalise else forward_move_points
+    return {h: fn(df, h) for h in horizons}
+
+
+def screen(df: pd.DataFrame, horizons=HORIZONS, n_bins: int = N_BINS,
+           precomputed: dict[int, pd.Series] | None = None,
+           normalise: bool = False) -> list[dict]:
     """Run the full feature x horizon x bin screen once."""
+    ys = precomputed if precomputed is not None else targets(df, horizons, normalise)
     cells = []
     for h in horizons:
-        y = forward_move_points(df, h)
+        y = ys[h]
         for feat in FEATURES:
             if feat not in df.columns:
                 continue
@@ -172,21 +202,70 @@ def screen(df: pd.DataFrame, horizons=HORIZONS, n_bins: int = N_BINS) -> list[di
     return cells
 
 
+def signflip_null(df: pd.DataFrame, n_draws: int, seed: int,
+                  horizons=HORIZONS, n_bins: int = N_BINS,
+                  normalise: bool = False) -> np.ndarray:
+    """
+    Family-wise null by flipping the SIGN of whole sessions of forward returns.
+
+    A SECOND, independent null, not a replacement for rotation.
+
+    It exists because rotation looked conservative and turned out not to be. On the first
+    dataset checked, the observed statistic sat at the 8th percentile of its own rotation
+    null when the true edge was exactly zero, which suggested the null was running too
+    high and reporting p-values too kind to the no-signal conclusion. Measured properly
+    across 12 independent zero-edge datasets, the observed statistic lands at a mean
+    percentile of 40% against the 50% a calibrated null gives, z = -1.24. **That is not a
+    detectable bias.** The single-dataset reading was sampling noise, and a family-wise
+    maximum lands anywhere in its null.
+
+    Sign-flipping is kept because it is the better-motivated null for this specific
+    hypothesis and because two nulls built on different principles agreeing is worth more
+    than one. The hypothesis is that a feature does not predict the DIRECTION of the next
+    move, so negating whole sessions leaves the magnitude of every forward return, every
+    volatility cluster, every within-session autocorrelation, and the entire relationship
+    between the features and |target| exactly as observed. Only the sign relationship
+    dies. Sessions flip as blocks so overlapping forward returns keep their joint
+    structure.
+    """
+    rng = np.random.default_rng(seed)
+    base = targets(df, horizons, normalise)
+    sessions = df["session_date"].to_numpy()
+    codes = pd.factorize(sessions)[0]
+    n_sessions = codes.max() + 1
+
+    out = []
+    for _ in range(n_draws):
+        flip = rng.choice((-1.0, 1.0), size=n_sessions)[codes]
+        flipped = {h: y * flip for h, y in base.items()}
+        cells = screen(df, horizons, n_bins, precomputed=flipped)
+        out.append(max((abs(c["t"]) for c in cells), default=0.0))
+    return np.array(out)
+
+
 def rotation_null(df: pd.DataFrame, n_rotations: int, seed: int,
-                  horizons=HORIZONS, n_bins: int = N_BINS) -> np.ndarray:
+                  horizons=HORIZONS, n_bins: int = N_BINS,
+                  normalise: bool = False) -> np.ndarray:
     """
     Distribution of the BEST |t| across the whole screen when there is nothing to find.
 
-    The features stay exactly where they are; the price series is rotated by a whole
-    number of sessions. Every autocorrelation, volatility cluster, and overlap structure
-    survives intact. Only the alignment between feature and future is destroyed.
+    The features stay exactly where they are; the TARGET SERIES is rotated by a whole
+    number of sessions. Every autocorrelation, volatility cluster, and overlap between
+    adjacent forward returns survives intact. Only the alignment between feature and
+    future is destroyed.
+
+    Rotating the target rather than the price is deliberate. Rolling `close` and then
+    recomputing forward moves leaves ATR, and every other price-derived feature, sitting
+    at its ORIGINAL position, so a rotated run pairs one period's volatility with another
+    period's moves. That mismatch inflated the null. Rotating the finished target keeps
+    the normalisation attached to the thing it normalises.
     """
     rng = np.random.default_rng(seed)
     sessions = df["session_date"].to_numpy()
     boundaries = np.flatnonzero(np.r_[True, sessions[1:] != sessions[:-1]])
     n = len(df)
 
-    price = df["close"].to_numpy()
+    base = targets(df, horizons, normalise)
     out = []
     # Skip rotations near zero in either direction; those leave the series almost aligned.
     usable = boundaries[(boundaries > 0.02 * n) & (boundaries < 0.98 * n)]
@@ -194,9 +273,9 @@ def rotation_null(df: pd.DataFrame, n_rotations: int, seed: int,
         return np.array([])
 
     for shift in rng.choice(usable, size=min(n_rotations, len(usable)), replace=False):
-        rotated = df.copy()
-        rotated["close"] = np.roll(price, int(shift))
-        cells = screen(rotated, horizons, n_bins)
+        rolled = {h: pd.Series(np.roll(y.to_numpy(), int(shift)), index=y.index)
+                  for h, y in base.items()}
+        cells = screen(df, horizons, n_bins, precomputed=rolled)
         out.append(max((abs(c["t"]) for c in cells), default=0.0))
     return np.array(out)
 
@@ -284,31 +363,52 @@ def main(argv=None) -> int:
         print()
 
         # ---- family-wise null ----------------------------------------------
-        print(f"  Building the family-wise null from {args.rotations} session rotations.")
-        print("  This re-runs the entire screen against a rotated price series, so the")
-        print("  null accounts for the search AND for the overlap between forward returns.")
-        null = rotation_null(feats, args.rotations, args.seed)
-        observed_max_t = abs(cells[0]["t"]) if cells else 0.0
+        print(f"  Building the family-wise null, {args.rotations} draws per method.")
+        print("  Two null constructions on different principles, so a verdict does not")
+        print("  rest on one. ROTATION shifts the target by whole sessions. SIGN-FLIP")
+        print("  negates whole sessions, preserving every magnitude and destroying only")
+        print("  the direction, which is exactly the hypothesis under test.")
+        print()
+        print(f"    {'target':<18}{'null':<12}{'observed':>10}{'null med':>10}"
+              f"{'null p95':>10}{'FW p':>8}")
 
-        if len(null):
-            p = float((null >= observed_max_t).mean())
-            print()
-            print(f"    observed best |t|        {observed_max_t:.2f}")
-            print(f"    null median best |t|     {np.median(null):.2f}")
-            print(f"    null 95th percentile     {np.percentile(null, 95):.2f}")
-            print(f"    FAMILY-WISE p            {p:.3f}")
-            print()
-            if p > 0.05:
-                print("    ** NOT SIGNIFICANT. The best cell found in this search is no")
-                print("       better than what rotating the price series produces by")
-                print("       chance. There is no evidence of predictability here. **")
-            else:
-                print("    Best cell survives the family-wise null. That means it is not")
-                print("    obviously noise. It does NOT mean it is tradable: check the")
-                print("    vs-cost column, and note the bin boundaries were fitted here.")
-        else:
-            p = None
+        combos = (("raw points", False, "rotation", rotation_null),
+                  ("ATR-normalised", True, "rotation", rotation_null),
+                  ("ATR-normalised", True, "sign-flip", signflip_null))
+        results = {}
+        for label, norm, null_name, null_fn in combos:
+            obs = max((abs(c["t"]) for c in screen(feats, normalise=norm)), default=0.0)
+            null = null_fn(feats, args.rotations, args.seed, normalise=norm)
+            if not len(null):
+                continue
+            p = float((null >= obs).mean())
+            results[f"{label} / {null_name}"] = {
+                "observed": obs, "median": float(np.median(null)),
+                "p95": float(np.percentile(null, 95)), "p": p}
+            print(f"    {label:<18}{null_name:<12}{obs:>10.2f}{np.median(null):>10.2f}"
+                  f"{np.percentile(null, 95):>10.2f}{p:>8.3f}")
+
+        print()
+        # The verdict is the WORST case across constructions. If any credible null says
+        # significant, that has to be confronted rather than averaged away.
+        p = max(r["p"] for r in results.values()) if results else None
+        min_p = min(r["p"] for r in results.values()) if results else None
+        observed_max_t = (results["raw points / rotation"]["observed"]
+                          if "raw points / rotation" in results else 0.0)
+        if min_p is not None and min_p <= 0.05 < p:
+            print(f"    ** NULLS DISAGREE: p ranges {min_p:.3f} to {p:.3f} across")
+            print("       constructions. Treat as unresolved, not as a finding. **")
+            p = min_p
+        if p is None:
             print("    null could not be built (too few sessions)")
+        elif p > 0.05:
+            print("    ** NOT SIGNIFICANT under every null construction. The best cell in")
+            print("       this search is no better than what permuting the target")
+            print("       produces by chance. No evidence of predictability here. **")
+        else:
+            print("    Best cell survives the family-wise null. That means it is not")
+            print("    obviously noise. It does NOT mean it is tradable: check the")
+            print("    vs-cost column, and note the bin boundaries were fitted here.")
 
         # ---- the tradability question ---------------------------------------
         clears = [c for c in cells if c["vs_cost"] >= 1.0]
@@ -326,9 +426,8 @@ def main(argv=None) -> int:
             "round_trip_points": rt_points,
             "n_cells": n_cells,
             "observed_max_abs_t": observed_max_t,
-            "null_median": float(np.median(null)) if len(null) else None,
-            "null_p95": float(np.percentile(null, 95)) if len(null) else None,
             "family_wise_p": p,
+            "nulls": results,
             "cells_clearing_cost": len(clears),
             "top_cells": cells[:20],
         }

@@ -838,3 +838,48 @@ def test_screen_does_not_manufacture_a_signal_from_noise():
     null = rotation_null(df, n_rotations=25, seed=13, horizons=(1, 3, 6), n_bins=5)
     p = float((null >= observed).mean())
     assert p > 0.05, f"noise screened as significant at p={p:.3f}"
+
+
+def test_signflip_null_preserves_magnitudes_and_only_kills_direction():
+    """
+    The property that makes sign-flip the right null for a DIRECTIONAL hypothesis: every
+    forward-return magnitude, and therefore every volatility cluster and every
+    feature-to-|target| relationship, survives untouched.
+    """
+    from tools.forward_returns import targets
+    df = _screen_frame(n_sessions=8, bars=20, seed=4)
+    base = targets(df, (1, 3), normalise=False)
+    rng = np.random.default_rng(0)
+    codes = pd.factorize(df["session_date"].to_numpy())[0]
+    flip = rng.choice((-1.0, 1.0), size=codes.max() + 1)[codes]
+    for h, y in base.items():
+        flipped = y * flip
+        assert np.allclose(flipped.abs().to_numpy(), y.abs().to_numpy(), equal_nan=True)
+    # And a flip is applied per SESSION, never per bar, so within-session structure holds.
+    for _, g in pd.DataFrame({"sd": df["session_date"], "f": flip}).groupby("sd"):
+        assert g["f"].nunique() == 1
+
+
+def test_the_two_null_constructions_agree_on_noise():
+    """
+    Rotation and sign-flip rest on different principles. A verdict that depended on which
+    one was picked would not be a verdict. Pinned because a hunch that they disagreed sent
+    me looking for a bias that measurement then showed was not there.
+    """
+    from tools.forward_returns import rotation_null, screen, signflip_null
+    df = _screen_frame(seed=21, signal=0.0)
+    obs = max(abs(c["t"]) for c in screen(df, horizons=(1, 3), n_bins=5))
+    rot = rotation_null(df, 20, 3, horizons=(1, 3), n_bins=5)
+    sgn = signflip_null(df, 20, 3, horizons=(1, 3), n_bins=5)
+    p_rot = float((rot >= obs).mean())
+    p_sgn = float((sgn >= obs).mean())
+    assert p_rot > 0.05 and p_sgn > 0.05, f"noise called significant: {p_rot}, {p_sgn}"
+
+
+def test_signflip_null_still_detects_a_planted_signal():
+    """A null that nothing can beat is not a null, it is a rubber stamp."""
+    from tools.forward_returns import screen, signflip_null
+    df = _screen_frame(seed=22, signal=0.8)
+    obs = max(abs(c["t"]) for c in screen(df, horizons=(1,), n_bins=5))
+    null = signflip_null(df, 20, 3, horizons=(1,), n_bins=5)
+    assert float((null >= obs).mean()) < 0.05
