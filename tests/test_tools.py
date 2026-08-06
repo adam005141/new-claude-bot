@@ -1077,18 +1077,75 @@ def test_simulation_honours_the_trailing_mll_and_its_lock():
     assert lose["breach"] == 1.0 and lose["pass"] == 0.0
 
 
-def test_daily_stop_truncates_the_session_loss():
+def _walk_sessions(n=20000, steps=180, drift=0.0, sd=1.0, seed=0):
+    """Sessions as real random walks, so `final` and `mae` are jointly consistent."""
+    rng = np.random.default_rng(seed)
+    inc = rng.normal(drift / steps, sd, (n, steps))
+    path = inc.cumsum(axis=1)
+    return path[:, -1], np.minimum(path.min(axis=1), 0.0)
+
+
+def test_daily_stop_lowers_ruin_by_truncating_the_session_loss():
+    """The point of the lever: cap the loss without reducing size."""
     from engine.config import PropRules
-    from tools.feasibility import simulate
-    rng = np.random.default_rng(3)
+    from tools.feasibility import apply_daily_stop, simulate
+    final, mae = _walk_sessions(n=4000, drift=8.0, sd=12.0, seed=4)
     rules = PropRules()
-    # A fat left tail among small wins. The bootstrap places the bad sessions in varying
-    # positions, so the claim is comparative rather than absolute: capping the session loss
-    # must reduce the ruin rate. That is the entire point of the lever.
-    r = np.array([-2500.0] * 3 + [60.0] * 80)
-    no_stop = simulate(r, rules, 120, 300, np.random.default_rng(3), None)
-    stopped = simulate(r, rules, 120, 300, np.random.default_rng(3), 150.0)
+    no_stop = simulate(final, rules, 250, 400, np.random.default_rng(3))
+    capped = apply_daily_stop(final, mae, 150.0, slip_usd=0.0)
+    stopped = simulate(capped, rules, 250, 400, np.random.default_rng(3))
     assert stopped["breach"] < no_stop["breach"], (
-        f"a $150 session cap must lower ruin: {stopped['breach']:.2f} "
-        f"vs {no_stop['breach']:.2f}")
-    assert stopped["pass"] > no_stop["pass"]
+        f"a $150 cap must lower ruin: {stopped['breach']:.2f} vs {no_stop['breach']:.2f}")
+
+
+def test_daily_stop_uses_the_real_path_and_cannot_create_money():
+    """
+    Regression on a bug that reported a 100% pass rate for a NEGATIVE-expectancy
+    configuration. The stop was applied to each session's FINAL return, which kept every
+    session that traded through the stop level and recovered. On real data that look-ahead
+    was worth about $40 a session against an $8.68 edge.
+
+    A correctly modelled stop can only REDUCE mean return: it converts recoveries into
+    realised losses and leaves winners untouched.
+    """
+    from tools.feasibility import apply_daily_stop
+    # Session 0 dips to -400 and closes +300. A -150 stop must NOT keep the +300.
+    final = np.array([300.0, 50.0, -600.0])
+    mae = np.array([-400.0, -20.0, -600.0])
+    out = apply_daily_stop(final, mae, 150.0, slip_usd=0.0)
+    assert out[0] == -150.0, "a session that traded through the stop cannot keep its recovery"
+    assert out[1] == 50.0, "a session that never reached the stop is untouched"
+    assert out[2] == -150.0, "a session that ended past the stop is capped"
+
+    # On real paths the invariant is optional stopping: for a DRIFTLESS walk a stop
+    # leaves the mean unchanged, and with POSITIVE drift it strictly reduces it, because
+    # exiting early forgoes the remaining drift. A stop can never manufacture return.
+    flat_final, flat_mae = _walk_sessions(drift=0.0, sd=12.0, seed=7)
+    for stop in (150.0, 300.0):
+        capped = apply_daily_stop(flat_final, flat_mae, stop, slip_usd=0.0)
+        assert abs(capped.mean() - flat_final.mean()) < 3.0, (
+            f"driftless: a ${stop:.0f} stop moved the mean from "
+            f"{flat_final.mean():.2f} to {capped.mean():.2f}; optional stopping says it "
+            "should not")
+
+    up_final, up_mae = _walk_sessions(drift=40.0, sd=12.0, seed=8)
+    for stop in (150.0, 300.0):
+        capped = apply_daily_stop(up_final, up_mae, stop, slip_usd=0.0)
+        assert capped.mean() < up_final.mean(), (
+            f"positive drift: a ${stop:.0f} stop raised the mean from "
+            f"{up_final.mean():.2f} to {capped.mean():.2f}, which is impossible")
+
+
+def test_the_old_floor_would_have_created_money():
+    """Pins the size of the bug, so the failure mode stays legible rather than abstract."""
+    from tools.feasibility import apply_daily_stop
+    # sd tuned so the session standard deviation lands near the measured $257.
+    final, mae = _walk_sessions(drift=9.0, sd=19.0, seed=9)
+    floored = np.maximum(final, -157.5)                       # the buggy transform
+    correct = apply_daily_stop(final, mae, 150.0, slip_usd=0.0)
+    invented = floored.mean() - final.mean()
+    assert invented > 15.0, (
+        f"flooring the FINAL return should invent tens of dollars a session, got "
+        f"{invented:+.2f}")
+    assert correct.mean() < floored.mean() - 15.0, (
+        f"the path-aware version must not: {correct.mean():+.2f} vs {floored.mean():+.2f}")

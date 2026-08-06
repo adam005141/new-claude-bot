@@ -59,7 +59,9 @@ from engine.config import (  # noqa: E402
 from engine.data import build_continuous, resample  # noqa: E402
 from engine.features import compute  # noqa: E402
 from engine.overnight import minutes_since_open  # noqa: E402
-from tools.session_decomposition import WINDOWS, window_returns  # noqa: E402
+from tools.session_decomposition import (  # noqa: E402
+    WINDOWS, window_excursion, window_returns,
+)
 
 MEAN_BLOCK = 10          # sessions; long enough to carry a losing cluster intact
 
@@ -78,8 +80,28 @@ def stationary_bootstrap(x: np.ndarray, n_out: int, rng, mean_block: int = MEAN_
     return out
 
 
+def apply_daily_stop(final_usd: np.ndarray, mae_usd: np.ndarray,
+                     stop_usd: float | None, slip_usd: float = 6.25) -> np.ndarray:
+    """
+    Apply a per-session loss cap using the ACTUAL intraday path.
+
+    A session whose adverse excursion reached the cap is closed there and its later
+    recovery is NOT available. This is the whole correction: an earlier version floored the
+    session's FINAL return instead, which kept every session that traded through the stop
+    and came back. On this data that look-ahead was worth about $40 a session against a
+    real edge of $8.68, and it turned a -$12.57 configuration into +$75.92. It reported a
+    100% pass rate for a strategy with negative expectancy.
+
+    `slip_usd` is one MES tick, because a stop is a market order once touched.
+    """
+    if stop_usd is None:
+        return final_usd
+    hit = mae_usd <= -stop_usd
+    return np.where(hit, -(stop_usd + slip_usd), final_usd)
+
+
 def simulate(returns: np.ndarray, rules: PropRules, n_sessions: int, trials: int,
-             rng, daily_stop: float | None) -> dict:
+             rng, daily_stop: float | None = None) -> dict:
     """
     Replay the Topstep rules over bootstrapped session P&L.
 
@@ -89,11 +111,10 @@ def simulate(returns: np.ndarray, rules: PropRules, n_sessions: int, trials: int
     """
     passed = breached = 0
     for _ in range(trials):
+        # `returns` already has the stop applied per session using the real intraday
+        # path. Applying it here, to a bootstrapped series, would be the look-ahead this
+        # tool exists to avoid.
         r = stationary_bootstrap(returns, n_sessions, rng)
-        if daily_stop is not None:
-            # The self-imposed stop flattens the position once the session loss reaches it.
-            # Modelled as a floor with a tick of slippage, since the exit is a market order.
-            r = np.maximum(r, -daily_stop * 1.05)
         bal = rules.starting_balance
         floor = rules.starting_balance - rules.mll_buffer
         peak = bal
@@ -161,31 +182,39 @@ def main(argv=None) -> int:
 
     rng = np.random.default_rng(args.seed)
     rows = []
+    print("  `$/sess` is NET of cost and AFTER the stop, applied against each session's")
+    print("  real intraday path. `stopped` is how often the cap actually fired.")
+    print()
     print(f"  {'window':<16}{'vol gate':>10}{'daily stop':>12}{'qty':>5}"
-          f"{'n sess':>8}{'$/sess':>9}{'sd $':>8}{'PASS':>8}{'BREACH':>8}")
+          f"{'n sess':>8}{'$/sess':>9}{'sd $':>8}{'stopped':>8}{'PASS':>8}{'BREACH':>8}")
 
     for wname in ("GLOBEX_TO_OPEN", "FULL_SESSION"):
         lo, hi = WINDOWS[wname]
-        r_pts = window_returns(feats, mso, lo, hi)
+        exc = window_excursion(feats, mso, lo, hi)
         for gate in (1.00, 0.60, 0.40):
-            sel = r_pts.index[rv.reindex(r_pts.index).fillna(1.0) <= gate]
+            sel = exc.index[rv.reindex(exc.index).fillna(1.0) <= gate]
             if len(sel) < 60:
                 continue
-            base = (r_pts.loc[sel] - rt_points).to_numpy() * inst.point_value
-            frac = len(sel) / len(r_pts)
+            frac = len(sel) / len(exc)
             for stop in (None, 300.0, 150.0):
                 for qty in (1, 2):
-                    x = base * qty
-                    res = simulate(x, rules, int(args.sessions * frac), args.trials,
-                                   rng, stop)
+                    # Gross P&L and adverse excursion at this size, then the stop applied
+                    # against the real path, then the round trip charged.
+                    final = exc.loc[sel, "final"].to_numpy() * inst.point_value * qty
+                    mae = exc.loc[sel, "mae"].to_numpy() * inst.point_value * qty
+                    x = apply_daily_stop(final, mae, stop) - rt_points * inst.point_value * qty
+                    res = simulate(x, rules, int(args.sessions * frac), args.trials, rng)
+                    hit_rate = (0.0 if stop is None
+                                else float((mae <= -stop).mean()))
                     rows.append({"window": wname, "gate": gate, "daily_stop": stop,
                                  "qty": qty, "n_sessions": len(sel),
-                                 "mean_usd": float(x.mean()), "sd_usd": float(x.std(ddof=1)),
-                                 **res})
+                                 "mean_usd": float(x.mean()),
+                                 "sd_usd": float(x.std(ddof=1)),
+                                 "stop_hit_rate": hit_rate, **res})
                     print(f"  {wname:<16}{gate:>10.2f}"
                           f"{('none' if stop is None else f'${stop:.0f}'):>12}{qty:>5}"
                           f"{len(sel):>8}{x.mean():>9.2f}{x.std(ddof=1):>8.0f}"
-                          f"{res['pass']:>8.1%}{res['breach']:>8.1%}")
+                          f"{hit_rate:>8.0%}{res['pass']:>8.1%}{res['breach']:>8.1%}")
 
     best = max(rows, key=lambda r: r["pass"])
     print()
@@ -200,8 +229,10 @@ def main(argv=None) -> int:
     print("     validation). These are in-sample odds and are the OPTIMISTIC case.")
     print("  2. A gate of 1.00 means no volatility filter. Gating raises survival by")
     print("     trading less, which also lengthens the time to the target.")
-    print("  3. The daily stop is a DESIGN choice, not a firm rule. It is the only lever")
-    print("     that truncates a session's loss without reducing position size.")
+    print("  3. The daily stop is a DESIGN choice, not a firm rule. It truncates a")
+    print("     session's loss without reducing size, and it COSTS expectancy: every")
+    print("     session that traded through the cap and recovered is now a realised loss.")
+    print("     If a stop RAISES `$/sess`, that is a bug, not a discovery.")
     print("  4. P(breach) is the probability of losing the account. Weigh it against the")
     print("     evaluation fee, not against P(pass).")
 

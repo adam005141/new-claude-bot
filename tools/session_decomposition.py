@@ -85,6 +85,31 @@ def window_returns(df: pd.DataFrame, mso: pd.Series,
     return (exit_ - entry).dropna()
 
 
+def window_excursion(df: pd.DataFrame, mso: pd.Series,
+                     lo: float, hi: float) -> pd.DataFrame:
+    """
+    Per session: the window's final return AND its maximum adverse excursion for a long,
+    both in index points, measured from the entry bar's open.
+
+    The MAE is what makes a stop modellable. Without it a stop can only be applied to the
+    session's FINAL return, which silently keeps every session that traded through the stop
+    level and recovered. That is look-ahead, and on this data it was worth about $40 a
+    session against a real edge of $8.68.
+    """
+    inside = (mso >= lo) & (mso < hi)
+    frame = pd.DataFrame({"sd": df["session_date"].values,
+                          "open": df["open"].where(inside).values,
+                          "low": df["low"].where(inside).values,
+                          "close": df["close"].where(inside).values})
+    g = frame.groupby("sd", sort=True)
+    entry = g["open"].first()
+    out = pd.DataFrame({
+        "final": g["close"].last() - entry,
+        "mae": g["low"].min() - entry,          # <= 0 by construction
+    }).dropna()
+    return out
+
+
 def describe(name: str, r: pd.Series, point_value: float, rt_points: float) -> dict:
     n = len(r)
     mean = float(r.mean())
