@@ -19,11 +19,25 @@ easiest way to make a search look more disciplined than it was.
 | 8 | 2026-08-02 | dev | MNQ | B (ORB) | defaults, adverse, **MEASURED** costs | 10 | +41.55 | **NO EVIDENCE**, n too small |
 | 9 | 2026-08-04 | dev | MES via ES prices | B (ORB) | defaults, adverse, measured, **prop ON** | 71 | -15.96 | **ACCOUNT DIED** at 28% of split; path-truncated |
 | 10 | 2026-08-04 | dev | MES via ES prices | B (ORB) | defaults, adverse, measured, **prop OFF** | **264** | **-10.91** | **NEGATIVE EDGE.** First run to clear the 200-trade gate. Loses -613.75 BEFORE any cost. |
+| 11 | 2026-08-06 | dev | MES via ES prices | **A (VWAP reversion)** | spec defaults, adverse, measured, prop OFF | 177 | **-20.70** | **FAILED**, and below the 200 gate. -0.266R, PF 0.69, loses -1,664.38 before any cost. Target-first rate 29.1% against a 43.4% coin-flip baseline: **mildly anti-predictive**. |
 
-**Distinct configurations tried: 1.** Runs 1 to 10 are the same frozen parameter set
+**Distinct configurations tried: 2.** Runs 1 to 10 are the same frozen parameter set
 evaluated under three predeclared cost scenarios, a measured-cost re-run, and a three-year
-re-run on validated proxy data. That is robustness checking, not a search. **No parameter
-has been tuned against any result at any point.**
+re-run on validated proxy data. That is robustness checking, not a search. Run 11 is the
+second and only other configuration. **No parameter has been tuned against any result at
+any point.**
+
+**BOTH LEGS ARE CLOSED.** Leg B is momentum continuation, Leg A is mean reversion. They
+are opposite bets on the same series and both lose before costs on the same three years,
+in both directions, in six of seven contracts, and more heavily once the best days are
+removed. See `RESULTS_DEV_2026-08-06_LEGA.md`.
+
+**The binding constraint is now measured, and it is not either signal.** The cost hurdle
+is 0.141R per trade. The minimum detectable edge across the *entire* 774-session sample,
+lockbox included, is about 0.12R. Those two numbers are the same size, so this dataset
+cannot certify a realistic winner; it can only reject clear losers, which it has now done
+twice. Any proposal for a third leg must state how it changes one of those two numbers
+before it is registered, not merely how it changes the entry rule.
 
 **LEG B IS CLOSED, and not for want of evidence.** Run 10 cleared the 200-trade gate at
 n=264 across three years with measured costs and returned an expectancy of -0.127R. Gross
@@ -118,11 +132,20 @@ does not repair it. What the larger sample buys is a fairer test, not a better r
 
 ---
 
+**Prediction check, run 11.** Registered: negative or indistinguishable from zero, fewer
+trades than Leg B, and the binding failure would be the expected-move floor with
+`MOVE_FLOOR` rejections exceeding the trade count. The first two were right. The third was
+badly wrong: `MOVE_FLOOR` fired **4** times against **177** trades. The reversions were
+comfortably large enough to pay for themselves. The failure was the signal, not the cost
+floor. **Third prediction falsified by measurement in this project.**
+
+---
+
 **Splits consumed:**
 
 | Split | Status |
 |---|---|
-| development | used (runs 1-6) |
+| development | used (runs 1-11) |
 | validation | **UNTOUCHED** |
 | lockbox | **UNTOUCHED**, single-use |
 
