@@ -22,12 +22,27 @@ easiest way to make a search look more disciplined than it was.
 | 11 | 2026-08-06 | dev | MES via ES prices | **A (VWAP reversion)** | spec defaults, adverse, measured, prop OFF | 177 | **-20.70** | **FAILED**, and below the 200 gate. -0.266R, PF 0.69, loses -1,664.38 before any cost. Target-first rate 29.1% against a 43.4% coin-flip baseline: **mildly anti-predictive**. |
 | 12 | 2026-08-06 | dev | MES via ES prices | screen | forward returns, 460 cells, overnight family added | n/a | n/a | **NOT SIGNIFICANT**, family-wise p 0.375 to 0.770 across three null constructions. Best cell was `gap_vs_on_range` at 120 min, 2.41x cost, in the gap-fade direction. |
 | 13 | 2026-08-06 | dev | MES via ES prices | **C (gap fade)** | registered defaults, adverse, measured, prop OFF | **236** | **-33.03** | **FAILED, worst of the three.** -0.432R, PF 0.57, CI [-49.97, -15.52] excludes zero. Negative in **all seven** contracts and both directions. Clears the 200 gate. |
+| 14 | 2026-08-06 | dev | MES via ES prices | barrier screen | path expectancy in R, 270 cells, 3 symmetric geometries | n/a | n/a | **NOTHING.** Best positive PATH +0.0047R, **0 of 270 cells clear the round trip**, best positive is 1.6% of the cost bar. The p=0.000 is a NEGATIVE cell and is not tradeable. |
 
 **Distinct configurations tried: 2.** Runs 1 to 10 are the same frozen parameter set
 evaluated under three predeclared cost scenarios, a measured-cost re-run, and a three-year
 re-run on validated proxy data. That is robustness checking, not a search. Run 11 is the
 second and only other configuration. **No parameter has been tuned against any result at
 any point.**
+
+**RUN 14 SETTLES THE QUESTION THE LEGS WERE ASKING.** The path expectancy is the only
+statistic that decides the sign of an edge, and conditional on every feature available it
+is measured at between 30 and 91 times too small to pay a round trip. The best positive
+cell in 270 is +0.0047R against a cost bar of 0.286R. That is not an undetected edge, it
+is a measured absence. See `RESULTS_DEV_2026-08-06_BARRIER.md`.
+
+Two biases were caught in that tool during calibration, both of which invented signal, and
+both of which had already produced a real-data result before being found. A binary touch
+rate returned family-wise p=0.000 on a synthetic random walk with a true edge of exactly
+zero, because censoring travels with an ATR-scaled feature and no baseline or rotation
+removes it. A long-only measurement reported +0.1013R on a synthetic pure uptrend where
+the correct path answer was -0.0089R. **The earlier real-data output of p=0.120 came from
+that version and must not be read.**
 
 **ALL THREE LEGS ARE CLOSED**, and run 13 produced the arithmetic that closes the
 framework rather than just the leg. For a driftless random walk `P(target first)` and the
@@ -272,7 +287,7 @@ floor. **Third prediction falsified by measurement in this project.**
 
 | Split | Status |
 |---|---|
-| development | used (runs 1-13) |
+| development | used (runs 1-14) |
 | validation | **UNTOUCHED** |
 | lockbox | **UNTOUCHED**, single-use |
 
