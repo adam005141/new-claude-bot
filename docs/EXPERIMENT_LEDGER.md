@@ -22,10 +22,31 @@ easiest way to make a search look more disciplined than it was.
 | 11 | 2026-08-06 | dev | MES via ES prices | **A (VWAP reversion)** | spec defaults, adverse, measured, prop OFF | 177 | **-20.70** | **FAILED**, and below the 200 gate. -0.266R, PF 0.69, loses -1,664.38 before any cost. Target-first rate 29.1% against a 43.4% coin-flip baseline: **mildly anti-predictive**. |
 | 12 | 2026-08-06 | dev | MES via ES prices | screen | forward returns, 460 cells, overnight family added | n/a | n/a | **NOT SIGNIFICANT**, family-wise p 0.375 to 0.770 across three null constructions. Best cell was `gap_vs_on_range` at 120 min, 2.41x cost, in the gap-fade direction. |
 | 13 | 2026-08-06 | dev | MES via ES prices | **C (gap fade)** | registered defaults, adverse, measured, prop OFF | **236** | **-33.03** | **FAILED, worst of the three.** -0.432R, PF 0.57, CI [-49.97, -15.52] excludes zero. Negative in **all seven** contracts and both directions. Clears the 200 gate. |
+| 16 | 2026-08-06 | dev | MES via ES prices | **D (overnight hold)** | registered defaults, 1 contract, adverse, measured, **prop ON** | 299 | **+10.18** | **PASSED THE COMBINE.** Target hit at session 327/387. PF 1.29, Sharpe 1.42, MDD $1,082 (54% of buffer). **But CI [-2.85, +22.72] straddles zero.** |
 | 15 | 2026-08-06 | dev | MES via ES prices | session decomposition | 4 windows, buy-and-hold, 1 contract | 387 | **+8.47/sess** | **FIRST POSITIVE.** Overnight (18:00-09:30) +2.68 pts/session, RTH -0.33. But **t NET = 1.35**, not the 2.15 on the gross mean. Worst night -$851 = 43% of the MLL at ONE contract. |
 | 14 | 2026-08-06 | dev | MES via ES prices | barrier screen | path expectancy in R, 270 cells, 3 symmetric geometries | n/a | n/a | **NOTHING.** Best positive PATH +0.0047R, **0 of 270 cells clear the round trip**, best positive is 1.6% of the cost bar. The p=0.000 is a NEGATIVE cell and is not tradeable. |
 
-**Distinct configurations tried: 2.** Runs 1 to 10 are the same frozen parameter set
+**Distinct configurations tried: 4.** Legs A, B, C and D. Trial count for correction
+purposes is 4; a nominal 0.05 is a family-wise 0.19.
+
+**LEG D IS THE ONLY SURVIVOR, AND IT IS NOT PROVEN.** It passed the Combine on development
+data, reaching the $3,000 target at session 327 of 387 with a Sharpe of 1.42 and a maximum
+drawdown of 54% of the loss buffer. Its confidence interval on expectancy is
+[-$2.85, +$22.72] and straddles zero. See `RESULTS_DEV_2026-08-06_LEGD.md`.
+
+**Significance is not available from this dataset.** At the measured drift of $8.47 a
+session against a standard deviation of $123, the net t-statistic is 1.35 on development,
+1.71 on development plus validation, and **1.92 using every session including the
+lockbox**. No split or combination reaches 2. The question this project can answer is
+whether an account survives and passes out of sample, not whether the effect is real.
+
+**Leg D differs from A, B and C in kind, not in quality of result.** Its prior comes from
+outside this dataset: the overnight/intraday decomposition is a documented property of
+equity indices, not something found by searching these 387 sessions. Legs A to C were
+hypotheses invented here and then tested on the data that suggested them. That difference,
+and not the encouraging number, is the only honest argument for spending validation.
+
+**Distinct configurations tried before Leg D: 2.** Runs 1 to 10 are the same frozen parameter set
 evaluated under three predeclared cost scenarios, a measured-cost re-run, and a three-year
 re-run on validated proxy data. That is robustness checking, not a search. Run 11 is the
 second and only other configuration. **No parameter has been tuned against any result at
@@ -83,6 +104,40 @@ concentration failure is a property of what was measured, not of how much." The 
 was right, the reasoning was half wrong. Concentration was not the mechanism; on the larger
 sample concentration improved (9.2% versus 24.5%) while the result got worse. The 11-month
 sample was not hiding a fragile edge, it was hiding a negative one.
+
+---
+
+## Registered BEFORE execution: run 17 (Leg D on VALIDATION) and run 18 (unconditioned dev)
+
+**Run 17 spends the validation split.** Registered before execution, parameters frozen
+exactly as they stand, and the pass criteria fixed here so they cannot be adjusted after
+seeing the result.
+
+Under the rule that closed Leg C, positive expectancy with a CI straddling zero means
+closed as undetectable with no validation spend. Leg D does not get an exemption for being
+interesting. It gets one for a reason about mechanism: its prior is external to this
+dataset, so validation is testing a hypothesis the data did not generate.
+
+**All three criteria must hold. Any one failing closes Leg D.**
+
+1. **Shape replicates.** Overnight positive and RTH flat or negative on validation,
+   measured by `session_decomposition.py`. If the shape inverts, Leg D is closed
+   regardless of P&L.
+2. **Survival.** No MLL breach across the validation split at one contract.
+3. **Expectancy positive.** Sign only. Significance is unavailable at n=232 (net t would
+   be about 1.05) and will not be claimed.
+
+**The lockbox stays shut either way.** It is single-use and reserved for a final go/no-go
+on frozen rules, not for a third look at an underpowered question.
+
+**Run 18 is the unconditioned development result**, `--no-prop` over all 387 sessions. The
+prop run stopped at session 327 because it WON, so its win rate, expectancy and drawdown
+are conditioned on reaching the target. That has to be on the record next to the pass.
+
+**Prediction.** The shape replicates (overnight positive, RTH negative), the account
+survives, and validation expectancy is positive but smaller than development's $10.18,
+because the development split is the stronger part of the bull market. Two of my last five
+predictions were wrong on magnitude, so the interval on that guess is wide.
 
 ---
 
