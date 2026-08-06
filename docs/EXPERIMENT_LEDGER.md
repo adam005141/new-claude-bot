@@ -22,6 +22,8 @@ easiest way to make a search look more disciplined than it was.
 | 11 | 2026-08-06 | dev | MES via ES prices | **A (VWAP reversion)** | spec defaults, adverse, measured, prop OFF | 177 | **-20.70** | **FAILED**, and below the 200 gate. -0.266R, PF 0.69, loses -1,664.38 before any cost. Target-first rate 29.1% against a 43.4% coin-flip baseline: **mildly anti-predictive**. |
 | 12 | 2026-08-06 | dev | MES via ES prices | screen | forward returns, 460 cells, overnight family added | n/a | n/a | **NOT SIGNIFICANT**, family-wise p 0.375 to 0.770 across three null constructions. Best cell was `gap_vs_on_range` at 120 min, 2.41x cost, in the gap-fade direction. |
 | 13 | 2026-08-06 | dev | MES via ES prices | **C (gap fade)** | registered defaults, adverse, measured, prop OFF | **236** | **-33.03** | **FAILED, worst of the three.** -0.432R, PF 0.57, CI [-49.97, -15.52] excludes zero. Negative in **all seven** contracts and both directions. Clears the 200 gate. |
+| 18 | 2026-08-06 | dev | MES via ES prices | D (overnight hold) | 1 contract, **prop OFF**, unconditioned | 353 | +9.44 | Unconditioned dev result. PF 1.26, CI [-3.06, +21.75] straddles zero. |
+| 17 | 2026-08-06 | **VALIDATION** | MES via ES prices | **D (overnight hold)** | frozen from run 16, 1 contract, prop ON | 25 | **-49.05** | **ALL THREE PRE-REGISTERED CRITERIA FAILED. ACCOUNT DIED at session 25 of 232 (11%).** Shape INVERTED: validation overnight +0.87 pts (net -$0.61/sess) while RTH earned +1.67. **LEG D CLOSED.** |
 | 16 | 2026-08-06 | dev | MES via ES prices | **D (overnight hold)** | registered defaults, 1 contract, adverse, measured, **prop ON** | 299 | **+10.18** | **PASSED THE COMBINE.** Target hit at session 327/387. PF 1.29, Sharpe 1.42, MDD $1,082 (54% of buffer). **But CI [-2.85, +22.72] straddles zero.** |
 | 15 | 2026-08-06 | dev | MES via ES prices | session decomposition | 4 windows, buy-and-hold, 1 contract | 387 | **+8.47/sess** | **FIRST POSITIVE.** Overnight (18:00-09:30) +2.68 pts/session, RTH -0.33. But **t NET = 1.35**, not the 2.15 on the gross mean. Worst night -$851 = 43% of the MLL at ONE contract. |
 | 14 | 2026-08-06 | dev | MES via ES prices | barrier screen | path expectancy in R, 270 cells, 3 symmetric geometries | n/a | n/a | **NOTHING.** Best positive PATH +0.0047R, **0 of 270 cells clear the round trip**, best positive is 1.6% of the cost bar. The p=0.000 is a NEGATIVE cell and is not tradeable. |
@@ -29,10 +31,27 @@ easiest way to make a search look more disciplined than it was.
 **Distinct configurations tried: 4.** Legs A, B, C and D. Trial count for correction
 purposes is 4; a nominal 0.05 is a family-wise 0.19.
 
-**LEG D IS THE ONLY SURVIVOR, AND IT IS NOT PROVEN.** It passed the Combine on development
-data, reaching the $3,000 target at session 327 of 387 with a Sharpe of 1.42 and a maximum
-drawdown of 54% of the loss buffer. Its confidence interval on expectancy is
-[-$2.85, +$22.72] and straddles zero. See `RESULTS_DEV_2026-08-06_LEGD.md`.
+**LEG D IS CLOSED. ALL FOUR LEGS ARE NOW CLOSED.** It passed the Combine on development
+data, reaching the $3,000 target at session 327 of 387 with a Sharpe of 1.42, and then
+failed every one of its three pre-registered validation criteria. The account was
+HALTED_PERMANENT after 25 of 232 validation sessions. See
+`RESULTS_VALIDATION_2026-08-06_LEGD.md`.
+
+**The shape inverted rather than weakened.** On validation the overnight window returned
++0.87 points a session, which does not clear its own round trip, while RTH returned +1.67.
+The entire premise of Leg D was that returns accrue outside the cash session; over the
+following eleven months they accrued inside it.
+
+**What Leg D demonstrated is narrower than "the effect is fake".** This project never had
+the power to overturn the overnight/intraday literature: the net t was 1.35 on development
+and would be 1.92 using every session including the lockbox. What it showed is that **a
+documented risk premium, harvested at the only size a $50,000 evaluation account can carry,
+does not survive that account's trailing drawdown rule.** The premium can be real and the
+$2,000 buffer still too small to sit through the risk it pays for. Those are compatible,
+and together they close the strategy without the effect needing to be false.
+
+**The pre-commitment did its job.** A discretionary reading would have kept Leg D alive on
+a 1.42 Sharpe and a Combine pass. The rules, fixed before the run, closed it.
 
 **Significance is not available from this dataset.** At the measured drift of $8.47 a
 session against a standard deviation of $123, the net t-statistic is 1.35 on development,
@@ -453,8 +472,8 @@ floor. **Third prediction falsified by measurement in this project.**
 | Split | Status |
 |---|---|
 | development | used (runs 1-14) |
-| validation | **UNTOUCHED** |
-| lockbox | **UNTOUCHED**, single-use |
+| validation | **SPENT** on run 17 (Leg D) |
+| lockbox | **UNTOUCHED**, single-use, and no candidate has earned it |
 
 ---
 
