@@ -248,10 +248,9 @@ def main(argv=None) -> int:
                     # against the real path, then the round trip charged.
                     final = exc.loc[sel, "final"].to_numpy() * inst.point_value * qty
                     mae = exc.loc[sel, "mae"].to_numpy() * inst.point_value * qty
-                    x = None
-                    x = apply_daily_stop(final, mae, stop) - rt_points * inst.point_value * qty
+                    x = (apply_daily_stop(final, mae, stop)
+                         - rt_points * inst.point_value * qty)
                     res = simulate(x, rules, int(args.sessions * frac), args.trials, rng)
-                    del x
                     hit_rate = (0.0 if stop is None
                                 else float((mae <= -stop).mean()))
                     rows.append({"window": wname, "gate": gate, "daily_stop": stop,

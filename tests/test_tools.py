@@ -1208,3 +1208,49 @@ def test_simulate_reports_time_to_resolution():
     r = simulate(np.array([300.0] * 60), rules, 60, 30, np.random.default_rng(0))
     assert r["pass"] == 1.0
     assert r["sessions_to_pass"] == pytest.approx(10.0)
+
+
+# ---------------------------------------------------------------------------
+# CLI smoke tests. These exist because a real bug shipped: a stray `del x` in
+# feasibility.main() raised UnboundLocalError on the first row. Every helper it
+# calls was unit-tested and passing; nothing exercised main() itself.
+# ---------------------------------------------------------------------------
+
+@pytest.fixture
+def tiny_data(tmp_path):
+    """A minimal on-disk dataset in the engine's file-naming convention."""
+    from engine.sessions import session_dates
+    rng = np.random.default_rng(4)
+    start = pd.Timestamp("2026-01-05 23:00", tz="UTC")        # 18:00 ET
+    n = 120 * 276                                             # 120 sessions of 5-min bars
+    ts = pd.date_range(start, periods=n, freq="5min", tz="UTC")
+    step = rng.normal(0.01, 0.9, n)
+    close = 5800 + np.cumsum(step)
+    df = pd.DataFrame({
+        "timestamp_utc": ts, "open": close - step,
+        "high": close + np.abs(rng.normal(0, .5, n)),
+        "low": close - np.abs(rng.normal(0, .5, n)),
+        "close": close, "volume": rng.integers(100, 3000, n).astype(float),
+    })
+    d = tmp_path / "data"
+    d.mkdir()
+    df.to_parquet(d / "MES_202603_1min_TRADES.parquet")
+    return d
+
+
+def test_feasibility_cli_runs_end_to_end(tiny_data, capsys):
+    from tools.feasibility import main
+    rc = main(["--data", str(tiny_data), "--symbol", "MES",
+               "--trials", "40", "--sessions", "60"])
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "FEASIBILITY SWEEP" in out
+    assert "EXPECTED COST TO A FUNDED ACCOUNT" in out
+    assert "CHEAPEST" in out
+
+
+def test_session_decomposition_cli_runs_end_to_end(tiny_data, capsys):
+    from tools.session_decomposition import main
+    assert main(["--data", str(tiny_data), "--symbols", "MES"]) == 0
+    out = capsys.readouterr().out
+    assert "GLOBEX_TO_OPEN" in out and "t NET" in out
