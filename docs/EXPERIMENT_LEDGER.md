@@ -247,6 +247,41 @@ completely. The 67% one-contract plan and the 49% two-contract plan are roughly 
 $1,200 on rough duration estimates, which is why the sweep now measures time-to-resolution
 directly instead of guessing it.
 
+### Why sizing cannot be the answer (2026-08-06)
+
+Three proposals were raised: size up to finish faster, take fewer larger trades, take more
+smaller ones. **They are the same move**, and the reason none can work is one line:
+
+> Position size multiplies BOTH the edge and the noise by the same number, so the
+> per-session ratio `mu/sigma` is invariant to size.
+
+Measured, one MES contract, overnight window, $150 cap:
+
+| size | mu | sigma | mu/sigma | sessions to +$3,000 |
+|---:|---:|---:|---:|---:|
+| 1 | 6.30 | 124 | 0.0508 | 476 |
+| 3 | 18.90 | 372 | 0.0508 | 159 |
+| 12 | 75.60 | 1,488 | 0.0508 | 40 |
+
+Identical every row. Size trades speed against P(pass) and touches nothing else.
+
+**What the account demands, in the same units:** 24 sigma of gain while never giving back
+16 sigma from a peak, against a per-session ratio of 0.051, an annual Sharpe near 0.8.
+
+**Only three things move that ratio: cost, variance, and instrument.** `tools/edge_budget.py`
+prices all three against the requirement, and reports P(pass) as a function of per-session
+Sharpe and horizon using the real return distribution rescaled to each Sharpe, so the fat
+tail and the clustering survive rather than being assumed away.
+
+**The largest unexamined lever is cost.** The round trip is $4.95 against a gross overnight
+edge of $13.42, so **37% of the edge is spent crossing the spread twice a day for a
+position held fifteen hours.** A scheduled exposure has no signal urgency, so a resting
+limit order is available in a way it is not for a breakout. Saving one tick a side lifts
+the annual Sharpe from 0.80 to 1.24; two ticks takes it to 1.40.
+
+**Prediction, registered before the run:** no single lever reaches the Sharpe needed for
+75% P(pass) inside six months, and the cost lever is the largest of the three.
+
 ### Cost-to-funded result, and a correction to my own reasoning
 
 | plan | PASS | luck only | LIFT | months to pass | E[fees] |

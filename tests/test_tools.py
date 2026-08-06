@@ -1303,3 +1303,57 @@ def test_the_edge_only_reaches_the_outcome_at_small_size():
     assert lifts[6] > 0.0, (
         f"but it does NOT vanish at six contracts; an earlier version of this test "
         f"asserted it did, on a wrong 40% baseline. Measured lift {lifts[6]:+.0%}")
+
+
+# ---------------------------------------------------------------------------
+# Edge budget
+# ---------------------------------------------------------------------------
+
+def test_position_size_cannot_change_the_per_session_sharpe():
+    """
+    The arithmetic behind "sizing up cannot help". Size multiplies edge and noise by the
+    same number, so the ratio that decides P(pass) is invariant. Pinned because three
+    separate proposals reduced to this one move.
+    """
+    rng = np.random.default_rng(3)
+    base = rng.normal(6.30, 124.0, 5000)
+    ratios = [(base * q).mean() / (base * q).std(ddof=1) for q in (1, 2, 3, 6, 12)]
+    assert max(ratios) - min(ratios) < 1e-9, f"ratio moved with size: {ratios}"
+
+
+def test_at_sharpe_sets_the_mean_and_preserves_the_tail():
+    """
+    The rescaling must move ONLY the mean. A Sharpe sweep that quietly gaussianised the
+    returns would flatter every row, and the tail is what ends accounts.
+    """
+    from tools.edge_budget import at_sharpe
+    rng = np.random.default_rng(5)
+    x = rng.standard_t(3, 4000) * 120 + 6.0
+    for s in (0.0, 0.05, 0.2):
+        y = at_sharpe(x, s)
+        assert y.std(ddof=1) == pytest.approx(x.std(ddof=1), rel=1e-9)
+        assert y.mean() / y.std(ddof=1) == pytest.approx(s, abs=1e-9)
+        # Shape survives: the centred series is identical, so every quantile of the
+        # deviation from the mean is unchanged.
+        assert np.allclose(y - y.mean(), x - x.mean())
+
+
+def test_more_sharpe_never_lowers_the_pass_rate():
+    from engine.config import PropRules
+    from tools.edge_budget import at_sharpe
+    from tools.feasibility import simulate
+    rng = np.random.default_rng(7)
+    base = rng.normal(0.0, 124.0, 3000)
+    rules = PropRules()
+    passes = [simulate(at_sharpe(base, s), rules, 250, 400, rng)["pass"]
+              for s in (0.0, 0.05, 0.10, 0.20)]
+    assert passes == sorted(passes), f"P(pass) not monotone in Sharpe: {passes}"
+
+
+def test_edge_budget_cli_runs_end_to_end(tiny_data, capsys):
+    from tools.edge_budget import main
+    assert main(["--data", str(tiny_data), "--symbol", "MES", "--trials", "40"]) == 0
+    out = capsys.readouterr().out
+    assert "PER-SESSION SHARPE" in out
+    assert "SHARPE REQUIRED" in out
+    assert "WHAT EACH LEVER IS WORTH" in out
