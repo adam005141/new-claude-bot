@@ -126,6 +126,48 @@ sample was not hiding a fragile edge, it was hiding a negative one.
 
 ---
 
+## Registered BEFORE execution: run 19 (feasibility sweep)
+
+Measurement only. No entry rule, no P&L, no new split. **The lockbox is not touched.**
+
+**Stated plainly because it governs everything that follows: validation is SPENT.** Any
+design chosen after seeing Leg D fail there is, by construction, fitted to data already
+seen. Development and validation can now only produce IN-SAMPLE, OPTIMISTIC numbers. The
+lockbox is the one remaining out-of-sample test and it is single-use.
+
+**Why a sweep instead of a fifth leg.** Four legs have failed. Before designing another it
+is worth establishing whether the ACCOUNT can support the measured edge at all, because if
+it cannot then no entry rule fixes it and legs five through eight fail identically.
+
+The structural ratio, measured:
+
+| window | session sd | buffer / sd |
+|---|---:|---:|
+| GLOBEX_TO_OPEN, dev+val | $141 | 14.2 |
+| FULL_SESSION, dev+val | $257 | **7.8** |
+
+A fixed drawdown limit wants twenty or more standard deviations of room. The best here is
+fourteen. **One MES contract is the smallest position that exists**, so the exposure cannot
+be reduced by sizing down; that is a property of the account and the contract, not of any
+signal.
+
+**What is swept**, across every lever genuinely available: window, a causal volatility
+gate, the SELF-IMPOSED daily loss cap (a DESIGN choice, not a firm rule, and the only lever
+that truncates a session's loss without reducing size), and contract count.
+
+**The bootstrap is blocked, not normal, and that correction matters.** The earlier Monte
+Carlo assumed normal returns and put P(breach) at 23% over 387 sessions; the real account
+died in 25. The error was not the drift estimate but the tail and the clustering. This
+resamples contiguous blocks of actual sessions, mean length ten, so the sample's own worst
+stretches carry into the simulation.
+
+**Prediction.** No configuration exceeds 70% P(pass) with P(breach) under 15%, and the
+volatility gate helps survival while pushing the target out of reach inside a year. If that
+holds, the honest conclusion is that the $2,000 buffer cannot support one MES contract, and
+the constraint is the account rather than the strategy.
+
+---
+
 ## Registered BEFORE execution: run 17 (Leg D on VALIDATION) and run 18 (unconditioned dev)
 
 **Run 17 spends the validation split.** Registered before execution, parameters frozen

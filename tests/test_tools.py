@@ -1023,3 +1023,72 @@ def test_barrier_screen_null_is_not_fooled_by_a_random_walk():
     obs = max(abs(c["z"]) for c in screen(df, touches))
     null = rotation_null(df, touches, 20, 3)
     assert float((null >= obs).mean()) > 0.05, "noise screened as a real path edge"
+
+
+# ---------------------------------------------------------------------------
+# Feasibility sweep
+# ---------------------------------------------------------------------------
+
+def test_stationary_bootstrap_preserves_clustering():
+    """
+    The whole reason it is blocked rather than iid. An earlier normal-draw Monte Carlo put
+    P(breach) at 23% over 387 sessions while the real account died in 25, because losing
+    sessions arrive together and independent draws cannot produce that.
+    """
+    from tools.feasibility import stationary_bootstrap
+    rng = np.random.default_rng(0)
+    # A series with strong serial dependence: long runs of one sign.
+    x = np.repeat([1.0, -1.0], 50)
+    x = np.tile(x, 5)
+    draws = [stationary_bootstrap(x, 200, rng, mean_block=10) for _ in range(40)]
+    # Lag-1 autocorrelation must survive resampling, which iid sampling would destroy.
+    acs = [np.corrcoef(d[:-1], d[1:])[0, 1] for d in draws]
+    assert np.mean(acs) > 0.5, f"clustering lost, mean lag-1 ac {np.mean(acs):.2f}"
+
+    iid = [rng.choice(x, 200) for _ in range(40)]
+    iid_ac = np.mean([np.corrcoef(d[:-1], d[1:])[0, 1] for d in iid])
+    assert np.mean(acs) > iid_ac + 0.4, "blocked must beat iid at preserving structure"
+
+
+def test_bootstrap_preserves_the_marginal_distribution():
+    from tools.feasibility import stationary_bootstrap
+    rng = np.random.default_rng(1)
+    x = rng.standard_t(3, 500) * 100          # fat tailed, like session P&L
+    draws = np.concatenate([stationary_bootstrap(x, 500, rng) for _ in range(20)])
+    assert abs(draws.mean() - x.mean()) < 0.25 * x.std()
+    assert abs(np.percentile(draws, 1) - np.percentile(x, 1)) < 0.5 * x.std(), \
+        "the left tail must survive; it is the thing that ends accounts"
+
+
+def test_simulation_honours_the_trailing_mll_and_its_lock():
+    """
+    Reaching +$2,000 is the milestone that makes the account structurally safe: the floor
+    locks at the starting balance and never rises again, so all further profit is buffer.
+    """
+    from engine.config import PropRules
+    from tools.feasibility import simulate
+    rng = np.random.default_rng(2)
+    rules = PropRules()
+    # Deterministic winner: must pass, never breach.
+    win = simulate(np.array([200.0] * 50), rules, 50, 50, rng, None)
+    assert win["pass"] == 1.0 and win["breach"] == 0.0
+    # Deterministic loser: must breach.
+    lose = simulate(np.array([-200.0] * 50), rules, 50, 50, rng, None)
+    assert lose["breach"] == 1.0 and lose["pass"] == 0.0
+
+
+def test_daily_stop_truncates_the_session_loss():
+    from engine.config import PropRules
+    from tools.feasibility import simulate
+    rng = np.random.default_rng(3)
+    rules = PropRules()
+    # A fat left tail among small wins. The bootstrap places the bad sessions in varying
+    # positions, so the claim is comparative rather than absolute: capping the session loss
+    # must reduce the ruin rate. That is the entire point of the lever.
+    r = np.array([-2500.0] * 3 + [60.0] * 80)
+    no_stop = simulate(r, rules, 120, 300, np.random.default_rng(3), None)
+    stopped = simulate(r, rules, 120, 300, np.random.default_rng(3), 150.0)
+    assert stopped["breach"] < no_stop["breach"], (
+        f"a $150 session cap must lower ruin: {stopped['breach']:.2f} "
+        f"vs {no_stop['breach']:.2f}")
+    assert stopped["pass"] > no_stop["pass"]
