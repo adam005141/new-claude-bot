@@ -755,3 +755,86 @@ def test_the_dollar_instrument_ranking_is_an_artefact_but_the_R_ranking_is_not()
         r = {i.symbol: cost_in_r(costs(i, c).round_trip_points(i), 1.5 * med_atr[i.symbol])
              for i, c in ((MES, mes_c), (MNQ, mnq_c))}
         assert r["MNQ"] < r["MES"], "the R ranking must NOT flip"
+
+
+# ---------------------------------------------------------------------------
+# Forward-return screen. The tool has to be calibrated in BOTH directions:
+# it must find a real signal, and it must not find one in noise.
+# ---------------------------------------------------------------------------
+
+def _screen_frame(n_sessions: int = 60, bars: int = 60, seed: int = 1,
+                  signal: float = 0.0) -> pd.DataFrame:
+    """
+    Random-walk sessions carrying one feature. When `signal` is non-zero the feature is
+    constructed to predict the NEXT bar's move by that many points, which is what lets the
+    screen be tested for sensitivity rather than only for scepticism.
+    """
+    import datetime as _dt
+    rng = np.random.default_rng(seed)
+    frames = []
+    for d in range(n_sessions):
+        step = rng.normal(0, 1.0, bars)
+        feat = rng.normal(0, 1.0, bars)
+        if signal:
+            # feature at t moves price between t and t+1
+            step[1:] += signal * feat[:-1]
+        close = 5800 + np.cumsum(step)
+        ts = pd.date_range(pd.Timestamp("2026-03-02 14:30", tz="UTC")
+                           + pd.Timedelta(days=d), periods=bars, freq="5min", tz="UTC")
+        frames.append(pd.DataFrame({
+            "timestamp_utc": ts, "close": close, "session_date": _dt.date(2026, 3, 2) + _dt.timedelta(days=d),
+            "vwap_dev": feat, "prev_vwap_dev": np.nan, "vwap_slope": np.nan,
+            "rvol": np.nan, "rv_pct": np.nan, "or_width_norm": np.nan,
+            "atr": np.nan, "realized_vol": np.nan,
+            "minutes_since_open": np.arange(bars, dtype=float),
+            "bar_of_session": np.arange(bars, dtype=float),
+        }))
+    return pd.concat(frames, ignore_index=True)
+
+
+def test_forward_move_never_spans_a_session_boundary():
+    """An overnight gap would dominate every statistic in the screen."""
+    from tools.forward_returns import forward_move_points
+    df = _screen_frame(n_sessions=3, bars=10)
+    y = forward_move_points(df, 3)
+    for _, g in df.assign(y=y).groupby("session_date", sort=False):
+        assert g["y"].tail(3).isna().all(), "last bars of a session must have no forward move"
+        assert g["y"].head(len(g) - 3).notna().all()
+
+
+def test_screen_finds_a_planted_signal():
+    """If the tool cannot detect a real edge it is useless as a negative result."""
+    from tools.forward_returns import screen
+    df = _screen_frame(seed=2, signal=0.8)
+    cells = [c for c in screen(df, horizons=(1,), n_bins=5) if c["feature"] == "vwap_dev"]
+    assert cells, "screen produced no cells for the planted feature"
+    assert max(abs(c["t"]) for c in cells) > 5.0, "planted signal was not detected"
+    # And the relationship must be monotone in the bin index, as constructed.
+    means = [c["mean_points"] for c in sorted(cells, key=lambda c: c["bin"])]
+    assert means[0] < means[-1]
+
+
+def test_rotation_null_destroys_the_planted_signal():
+    """
+    The null must not inherit the very effect it is supposed to calibrate against. Rotating
+    the price series by whole sessions has to break the feature-to-future link.
+    """
+    from tools.forward_returns import rotation_null, screen
+    df = _screen_frame(seed=3, signal=0.8)
+    observed = max(abs(c["t"]) for c in screen(df, horizons=(1,), n_bins=5))
+    null = rotation_null(df, n_rotations=15, seed=5, horizons=(1,), n_bins=5)
+    assert len(null)
+    assert null.max() < observed, "rotation did not remove the planted signal"
+
+
+def test_screen_does_not_manufacture_a_signal_from_noise():
+    """
+    The point of the family-wise null. On pure noise the best of many cells still looks
+    impressive; the null has to say so.
+    """
+    from tools.forward_returns import rotation_null, screen
+    df = _screen_frame(seed=11, signal=0.0)
+    observed = max(abs(c["t"]) for c in screen(df, horizons=(1, 3, 6), n_bins=5))
+    null = rotation_null(df, n_rotations=25, seed=13, horizons=(1, 3, 6), n_bins=5)
+    p = float((null >= observed).mean())
+    assert p > 0.05, f"noise screened as significant at p={p:.3f}"
