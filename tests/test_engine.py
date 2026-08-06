@@ -1243,3 +1243,131 @@ def test_session_windows_cover_every_tradable_minute():
             assert s == S.MAINTENANCE, f"{t.time()} should be the halt, got {s}"
         else:
             assert s != S.CLOSED, f"{t.time()} classified CLOSED but the market is open"
+
+
+# ---------------------------------------------------------------------------
+# Leg D: overnight hold
+# ---------------------------------------------------------------------------
+
+def _leg_d(params: StrategyParams | None = None):
+    from engine.strategy import OvernightHold
+    return OvernightHold(params or StrategyParams(), MES, RiskParams(), COST_ADVERSE)
+
+
+def test_leg_d_arms_only_at_the_globex_open():
+    from engine.strategy import Signal
+    leg = _leg_d()
+    row = {"close": 5800.0, "atr": 5.0, "minutes_since_open": -930.0,
+           "entries_blocked": False}
+    assert isinstance(leg.evaluate(row, SessionState()), Signal)
+    assert leg.evaluate({**row, "minutes_since_open": -880.0}, SessionState()) is None
+    assert leg.evaluate({**row, "minutes_since_open": -100.0}, SessionState()) is None
+    assert leg.evaluate({**row, "minutes_since_open": 60.0}, SessionState()) is None
+
+
+def test_leg_d_exit_is_the_clock_not_a_bar_count():
+    """
+    An overnight hold is defined by WHEN it closes. Expressing it as a bar count would
+    change meaning silently on any session missing a few bars.
+    """
+    leg = _leg_d()
+    sig = leg.evaluate({"close": 5800.0, "atr": 5.0, "minutes_since_open": -930.0,
+                        "entries_blocked": False}, SessionState())
+    assert sig.exit_by_mso == 0.0, "must close at the 09:30 ET open"
+
+
+def test_leg_d_stop_is_a_disaster_brake_not_a_risk_unit():
+    """
+    Measured overnight session sd is about 24.5 points. The stop must sit far outside
+    that, or the leg becomes the same path bet that killed Legs A and C.
+    """
+    leg = _leg_d()
+    sig = leg.evaluate({"close": 5800.0, "atr": 5.0, "minutes_since_open": -930.0,
+                        "entries_blocked": False}, SessionState())
+    assert sig.stop_distance_points == pytest.approx(100.0)   # $500 / $5 per point
+    assert sig.stop_distance_points > 3 * 24.5
+
+
+def test_leg_d_takes_one_exposure_per_session():
+    leg = _leg_d()
+    row = {"close": 5800.0, "atr": 5.0, "minutes_since_open": -930.0,
+           "entries_blocked": False}
+    assert leg.evaluate(row, SessionState(entries=1)) is None
+
+
+def test_r_sizer_refuses_leg_d_and_fixed_sizing_is_why_it_exists():
+    """
+    A 100-point stop risks $500 a contract against a $100 R target, so the R sizer
+    correctly refuses. Fixed sizing is the narrow, explicit override.
+    """
+    from engine.sizing import size_position
+    r = RiskParams()
+    assert size_position(100.0, MES, r).rejected_reason == "SIZE_ZERO_STOP_TOO_WIDE"
+    fixed = size_position(100.0, MES, RiskParams(fixed_contracts=1))
+    assert fixed.ok and fixed.quantity == 1
+    # The deviation from target stays visible rather than being hidden by the override.
+    assert fixed.total_risk_usd == pytest.approx(500.0)
+    assert fixed.risk_deviation == pytest.approx(4.0)
+
+
+def test_fixed_sizing_of_zero_is_refused():
+    from engine.sizing import size_position
+    got = size_position(100.0, MES, RiskParams(fixed_contracts=0))
+    assert not got.ok and got.rejected_reason == "FIXED_SIZE_ZERO"
+
+
+def test_leg_d_runs_end_to_end_and_holds_overnight():
+    from dataclasses import replace
+    cfg = EngineConfig(symbols=("MES",), leg="D")
+    cfg.risk = replace(cfg.risk, fixed_contracts=1)
+    cfg.prop = replace(cfg.prop, enabled=False)
+    feats = compute(_overnight_market(30), or_minutes=30, atr_window=14, rvol_lookback=20)
+    res = Backtester(cfg, "MES").run(feats)
+    trades = res.trades_frame()
+    assert not trades.empty, "leg D must trade every session it can"
+    assert (trades["side"] == "LONG").all()
+    assert (trades.groupby("session_date").size() <= 1).all()
+    # Entered in the evening, exited the next morning, still inside one session date.
+    entry_et = pd.to_datetime(trades["entry_time"]).dt.tz_convert(ET)
+    exit_et = pd.to_datetime(trades["exit_time"]).dt.tz_convert(ET)
+    assert (entry_et.dt.hour >= 18).all(), "entry must be at the Globex open"
+    assert (exit_et.dt.hour < 12).all(), "exit must be at the RTH open"
+    assert (exit_et.dt.date > entry_et.dt.date).all(), "the hold must span the night"
+
+
+def test_flat_time_is_session_relative_not_wall_clock():
+    """
+    Regression. `et.time() >= flat_time` reads correctly only for a session confined to
+    the afternoon. Once overnight holds were allowed it silently forbade all of them: an
+    18:00 ET bar is "after 16:50" on the clock while being fifteen hours BEFORE its own
+    session's flat time. Leg D raised a signal every night and the risk gate refused every
+    one, producing an empty trade list rather than an error.
+    """
+    from dataclasses import replace
+    cfg = EngineConfig(symbols=("MES",), leg="D")
+    cfg.risk = replace(cfg.risk, fixed_contracts=1)
+    cfg.prop = replace(cfg.prop, enabled=False)
+    feats = compute(_overnight_market(20), or_minutes=30, atr_window=14, rvol_lookback=20)
+    trades = Backtester(cfg, "MES").run(feats).trades_frame()
+    entry_et = pd.to_datetime(trades["entry_time"]).dt.tz_convert(ET)
+    assert (entry_et.dt.hour >= 18).any(), (
+        "entries after the wall-clock flat time but before the session flat time "
+        "must be permitted")
+
+
+def test_positions_are_still_flattened_at_the_session_flat_time():
+    """The other half: the fix must not disable the flat rule it generalised."""
+    from dataclasses import replace
+    from engine.overnight import minutes_since_open
+    cfg = EngineConfig(symbols=("MES",), leg="C")
+    cfg.prop = replace(cfg.prop, enabled=False)
+    feats = compute(_overnight_market(25), or_minutes=30, atr_window=14, rvol_lookback=20)
+    trades = Backtester(cfg, "MES").run(feats).trades_frame()
+    if trades.empty:
+        pytest.skip("no trades on this synthetic sample")
+    exit_mso = minutes_since_open(
+        pd.DataFrame({"timestamp_utc": pd.to_datetime(trades["exit_time"]),
+                      "session_date": trades["session_date"]}))
+    assert (exit_mso <= cfg.risk.flat_time_et.hour * 60
+            + cfg.risk.flat_time_et.minute - (9 * 60 + 30)).all(), \
+        "no position may survive its session's flat time"

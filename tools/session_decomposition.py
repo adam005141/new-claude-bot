@@ -102,7 +102,12 @@ def describe(name: str, r: pd.Series, point_value: float, rt_points: float) -> d
         "net_total_usd": float(net.sum()) * point_value,
         "hit_rate": float((r > 0).mean()),
         "sharpe_net": float(net.mean() / net.std(ddof=1) * ann) if net.std(ddof=1) else 0.0,
-        "t_stat": float(mean / (sd / np.sqrt(n))) if sd > 0 and n > 1 else 0.0,
+        # Both are reported because they differ a lot and only one is decision-relevant.
+        # Cost is a constant per session, so it shifts the mean without touching the sd:
+        # the gross t can clear 2 while the net t, which is what an account actually
+        # earns, sits near 1. Reporting gross alone overstates the case.
+        "t_gross": float(mean / (sd / np.sqrt(n))) if sd > 0 and n > 1 else 0.0,
+        "t_net": float(net.mean() / (sd / np.sqrt(n))) if sd > 0 and n > 1 else 0.0,
         "worst_points": float(r.min()), "best_points": float(r.max()),
         "p01_points": float(r.quantile(0.01)), "p05_points": float(r.quantile(0.05)),
     }
@@ -116,6 +121,12 @@ def main(argv=None) -> int:
     ap.add_argument("--price-source")
     ap.add_argument("--measured-costs", type=Path)
     ap.add_argument("--cost-scenario", choices=sorted(COST_SCENARIOS), default="adverse")
+    ap.add_argument("--cost-session",
+                    help="Charge one session's MEASURED spread instead of the all-day "
+                         "figure. This matters more here than anywhere else in the "
+                         "project: the overnight window is ENTERED at 18:00 ET, the "
+                         "thinnest moment of the day, and the all-day number is dominated "
+                         "by RTH. Try ASIA.")
     ap.add_argument("--decision-minutes", type=int, default=5)
     ap.add_argument("--dev-fraction", type=float, default=0.50)
     ap.add_argument("--report", type=Path)
@@ -130,7 +141,8 @@ def main(argv=None) -> int:
     summary = {}
     for symbol in args.symbols:
         inst = INSTRUMENTS[symbol]
-        costs = (measured_cost_models(args.measured_costs, symbol)[args.cost_scenario]
+        costs = (measured_cost_models(args.measured_costs, symbol,
+                                      session=args.cost_session)[args.cost_scenario]
                  if args.measured_costs else COST_SCENARIOS[args.cost_scenario])
         rt_points = costs.round_trip_points(inst)
 
@@ -156,14 +168,18 @@ def main(argv=None) -> int:
             rows.append(describe(name, r, inst.point_value, rt_points))
 
         print(f"  {'window':<16}{'n':>6}{'mean pts':>10}{'net $/sess':>12}"
-              f"{'net total $':>13}{'hit':>7}{'t':>7}{'Sharpe':>8}")
+              f"{'net total $':>13}{'hit':>7}{'t gross':>9}{'t NET':>8}{'Sharpe':>8}")
         for d in rows:
             print(f"  {d['window']:<16}{d['sessions']:>6}{d['mean_points']:>10.3f}"
                   f"{d['net_mean_usd']:>12.2f}{d['net_total_usd']:>13,.0f}"
-                  f"{d['hit_rate']:>7.1%}{d['t_stat']:>7.2f}{d['sharpe_net']:>8.2f}")
+                  f"{d['hit_rate']:>7.1%}{d['t_gross']:>9.2f}{d['t_net']:>8.2f}"
+                  f"{d['sharpe_net']:>8.2f}")
         print()
-        print("  `net` charges one round trip per session held. `t` is on the GROSS mean")
-        print("  and is not corrected for anything; four windows were tested.")
+        print("  `net` charges one round trip per session held.")
+        print("  READ t NET, NOT t GROSS. Cost is a constant per session, so it moves the")
+        print("  mean without touching the standard deviation: the gross t can clear 2")
+        print("  while the net t, which is what an account actually earns, sits near 1.")
+        print("  Neither is corrected for the four windows tested.")
         print()
 
         # ---- gap risk, which is the part that decides whether this is survivable ----

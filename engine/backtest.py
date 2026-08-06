@@ -27,10 +27,12 @@ from .risk import RiskEngine, RiskState
 from .sessions import ET, classify_index, is_tradable, SessionCalendar
 from .sizing import size_position
 from .strategy import (
-    GapFade, OpeningRangeBreakout, Rejection, SessionState, Signal, VWAPBandReversion,
+    GapFade, OpeningRangeBreakout, OvernightHold, Rejection, SessionState, Signal,
+    VWAPBandReversion,
 )
 
-LEGS = {"A": VWAPBandReversion, "B": OpeningRangeBreakout, "C": GapFade}
+LEGS = {"A": VWAPBandReversion, "B": OpeningRangeBreakout, "C": GapFade,
+        "D": OvernightHold}
 
 log = logging.getLogger(__name__)
 
@@ -110,7 +112,22 @@ class Backtester:
         df = features.reset_index(drop=True)
         sessions = classify_index(pd.DatetimeIndex(df["timestamp_utc"]))
         et_times = pd.DatetimeIndex(df["timestamp_utc"]).tz_convert(ET)
-        flat_time = self.cfg.risk.flat_time_et
+
+        # The flat time is SESSION-RELATIVE, not wall clock.
+        #
+        # Comparing `et.time() >= flat_time` reads correctly only for a session that never
+        # leaves the afternoon. Once overnight holds were allowed it silently forbade all
+        # of them: an 18:00 ET bar is "after 16:50" on the clock while being fifteen hours
+        # BEFORE its own session's flat time. Leg D raised a signal every night and the
+        # risk gate refused every one, producing an empty trade list rather than an error.
+        flat_mso = ((self.cfg.risk.flat_time_et.hour * 60
+                     + self.cfg.risk.flat_time_et.minute) - (9 * 60 + 30))
+        if "minutes_since_open" in df.columns:
+            past_flat = (df["minutes_since_open"] >= flat_mso).to_numpy()
+        else:
+            # Frames built before the overnight features existed. RTH-only by definition,
+            # so the wall clock and the session clock agree.
+            past_flat = (et_times.time >= self.cfg.risk.flat_time_et)
 
         position: Position | None = None
         pending: Signal | None = None
@@ -136,7 +153,7 @@ class Backtester:
 
             bar = Bar(row["open"], row["high"], row["low"], row["close"])
             next_open = rows[i + 1]["open"] if i + 1 < len(rows) else None
-            at_flat = et_times[i].time() >= flat_time
+            at_flat = bool(past_flat[i])
 
             # ---- 1. exits, before anything else -------------------------
             if position is not None:
@@ -150,7 +167,19 @@ class Backtester:
                                                   str(sessions.iloc[i]), raw_price=True)
                     result.trades.append(trade)
                     state.record_exit(i)
-                elif position.bars_held >= self.params.max_bars_in_trade:
+                elif (position.exit_by_mso is not None
+                      and row.get("minutes_since_open") is not None
+                      and row["minutes_since_open"] >= position.exit_by_mso):
+                    # A CLOCK exit. Leg D is defined by when it closes, not by a bar
+                    # count, so this is checked before the bar cap rather than folded
+                    # into it.
+                    position, trade = self._close(position, row["close"], i,
+                                                  row["timestamp_utc"], ExitReason.TIME,
+                                                  str(sessions.iloc[i]))
+                    result.trades.append(trade)
+                    state.record_exit(i)
+                elif (position.exit_by_mso is None
+                      and position.bars_held >= self.params.max_bars_in_trade):
                     position, trade = self._close(position, row["close"], i,
                                                   row["timestamp_utc"], ExitReason.TIME,
                                                   str(sessions.iloc[i]))
@@ -252,6 +281,7 @@ class Backtester:
             stop_distance_points=sig.stop_distance_points,
             target_distance_points=sig.target_distance_points,
             risk_usd=sizing.total_risk_usd,
+            exit_by_mso=sig.exit_by_mso,
         )
 
     def _close(self, pos: Position, price: float, i: int, ts, reason: ExitReason,

@@ -40,6 +40,11 @@ class Signal:
     stop_distance_points: float
     target_distance_points: float
     reason: str
+    # Close at or after this many minutes past the 09:30 ET open, regardless of stop or
+    # target. Leg D needs it: an overnight hold is defined by a CLOCK, not by a price
+    # level, and expressing that as a bar count would silently change meaning whenever a
+    # session was short a few bars.
+    exit_by_mso: float | None = None
 
 
 @dataclass(frozen=True)
@@ -72,6 +77,82 @@ class SessionState:
 
     def record_exit(self, bar_index: int) -> None:
         self.last_exit_bar = bar_index
+
+
+class OvernightHold:
+    """
+    Leg D. Long the Globex session, flat at the RTH open.
+
+    This is the only leg in the project that is NOT a bet on predicting anything. It is a
+    scheduled exposure: buy when the overnight session opens, sell when New York does.
+
+    Economic thesis, and it is a risk premium rather than an inefficiency. Equity index
+    returns have long been documented to accrue overnight while the cash session
+    contributes little or nothing, which is consistent with compensation for holding
+    exposure through the hours when the market cannot be exited cheaply. Measured on the
+    development split: the overnight window returned +2.68 points a session while RTH
+    returned -0.33.
+
+    Two consequences follow from it being a premium and not an edge, and both matter more
+    than the backtest:
+
+      1. It should PERSIST out of sample in a way none of Legs A to C had any reason to,
+         because nobody is arbitraging away compensation for risk.
+      2. It should HURT exactly when risk arrives. The worst single night in the
+         development split was -170 points, which is 43% of the entire MLL buffer at one
+         contract. A premium pays until it does not.
+
+    Long only, and that is a real weakness rather than a design choice: the development
+    split is a bull market, so a long-only overnight rule cannot distinguish the documented
+    effect from the sample. Only out-of-sample data settles that.
+    """
+
+    name = "OVERNIGHT"
+
+    def __init__(self, params: StrategyParams, inst: Instrument,
+                 risk: RiskParams, costs: CostModel):
+        self.p = params
+        self.inst = inst
+        self.risk = risk
+        self.costs = costs
+
+    def evaluate(self, row, state: SessionState,
+                 bar_index: int = 0) -> Signal | Rejection | None:
+        if state.entries >= 1:
+            return None                     # one scheduled exposure per session
+        mso = row.get("minutes_since_open")
+        atr_ = row.get("atr")
+        if mso is None or mso != mso or atr_ is None or atr_ != atr_ or atr_ <= 0:
+            return None
+        # Arm only in the opening minutes of the Globex session.
+        if not (-930 <= mso < -930 + self.p.overnight_entry_window_minutes):
+            return None
+        if not self.p.allow_long:
+            return None
+        if bool(row.get("entries_blocked", False)):
+            return Rejection("ROLL_OR_EXPIRY")
+
+        # The stop is a DISASTER BRAKE derived from the loss buffer, not a signal
+        # parameter, and it is deliberately far outside normal overnight variation. The
+        # measured session standard deviation is about 24.5 points, so a 100-point stop
+        # sits at roughly four of them: it truncates the tail that ends an account without
+        # interfering with the ordinary noise this leg is paid to sit through. Tightening
+        # it toward one standard deviation would convert a premium harvest into the same
+        # path bet that killed Legs A and C.
+        stop_pts = self.p.overnight_stop_usd / self.inst.point_value
+
+        return Signal(
+            side=Side.LONG,
+            trigger_price=row["close"],
+            stop_price=self.inst.round_to_tick(row["close"] - stop_pts),
+            target_price=self.inst.round_to_tick(row["close"] + 10 * stop_pts),
+            stop_distance_points=stop_pts,
+            # No profit target. The exit is the clock, and a target would cap the right
+            # tail of a distribution whose left tail is already uncapped.
+            target_distance_points=10 * stop_pts,
+            reason="OVERNIGHT_LONG",
+            exit_by_mso=self.p.overnight_exit_mso,
+        )
 
 
 class GapFade:

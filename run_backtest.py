@@ -75,10 +75,11 @@ def main(argv=None) -> int:
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--data", default="data")
     ap.add_argument("--symbols", nargs="+", default=["MES", "MNQ"])
-    ap.add_argument("--leg", choices=["A", "B", "C"], default="B",
+    ap.add_argument("--leg", choices=["A", "B", "C", "D"], default="B",
                     help="A = VWAP band reversion (RANGE regime only), "
                          "B = opening range breakout, C = opening gap fade toward the "
-                         "prior cash close. One leg per run: each route reports its own "
+                         "prior cash close, D = overnight hold (Globex open to RTH "
+                         "open). One leg per run: each route reports its own "
                          "sample size, so a losing leg cannot hide inside a combined "
                          "statistic.")
     ap.add_argument("--split", choices=sorted(SPLITS), default="dev")
@@ -98,6 +99,10 @@ def main(argv=None) -> int:
                          "spread; Leg A fires across the whole RTH day, so pass ALL for "
                          "it. Measurement put the two within 1%% of each other, so this "
                          "is a correctness choice, not a material one.")
+    ap.add_argument("--fixed-contracts", type=int,
+                    help="Bypass R-based sizing and trade this many contracts. Required "
+                         "for leg D, whose stop is a disaster brake four standard "
+                         "deviations out rather than a risk unit.")
     ap.add_argument("--no-prop", action="store_true",
                     help="Personal mode: no prop rule layer")
     ap.add_argument("--report", type=Path, help="Directory for CSV/JSON artefacts")
@@ -126,13 +131,16 @@ def main(argv=None) -> int:
         measured_costs_session=(None if args.cost_session.upper() == "ALL"
                                 else args.cost_session),
     )
+    if args.fixed_contracts is not None:
+        from dataclasses import replace
+        cfg.risk = replace(cfg.risk, fixed_contracts=args.fixed_contracts)
     if args.no_prop:
         from dataclasses import replace
         cfg.prop = replace(cfg.prop, enabled=False)
 
     cost_source = "MEASURED" if args.measured_costs else "ASSUMED"
     leg_name = {"A": "A VWAP band reversion", "B": "B opening range breakout",
-                "C": "C opening gap fade"}[args.leg]
+                "C": "C opening gap fade", "D": "D overnight hold"}[args.leg]
     print(f"engine {__version__} | leg={leg_name} | split={args.split} | "
           f"costs={args.cost_scenario} ({cost_source}) | "
           f"prop={'off' if args.no_prop else 'on'}")

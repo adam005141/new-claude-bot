@@ -22,6 +22,7 @@ easiest way to make a search look more disciplined than it was.
 | 11 | 2026-08-06 | dev | MES via ES prices | **A (VWAP reversion)** | spec defaults, adverse, measured, prop OFF | 177 | **-20.70** | **FAILED**, and below the 200 gate. -0.266R, PF 0.69, loses -1,664.38 before any cost. Target-first rate 29.1% against a 43.4% coin-flip baseline: **mildly anti-predictive**. |
 | 12 | 2026-08-06 | dev | MES via ES prices | screen | forward returns, 460 cells, overnight family added | n/a | n/a | **NOT SIGNIFICANT**, family-wise p 0.375 to 0.770 across three null constructions. Best cell was `gap_vs_on_range` at 120 min, 2.41x cost, in the gap-fade direction. |
 | 13 | 2026-08-06 | dev | MES via ES prices | **C (gap fade)** | registered defaults, adverse, measured, prop OFF | **236** | **-33.03** | **FAILED, worst of the three.** -0.432R, PF 0.57, CI [-49.97, -15.52] excludes zero. Negative in **all seven** contracts and both directions. Clears the 200 gate. |
+| 15 | 2026-08-06 | dev | MES via ES prices | session decomposition | 4 windows, buy-and-hold, 1 contract | 387 | **+8.47/sess** | **FIRST POSITIVE.** Overnight (18:00-09:30) +2.68 pts/session, RTH -0.33. But **t NET = 1.35**, not the 2.15 on the gross mean. Worst night -$851 = 43% of the MLL at ONE contract. |
 | 14 | 2026-08-06 | dev | MES via ES prices | barrier screen | path expectancy in R, 270 cells, 3 symmetric geometries | n/a | n/a | **NOTHING.** Best positive PATH +0.0047R, **0 of 270 cells clear the round trip**, best positive is 1.6% of the cost bar. The p=0.000 is a NEGATIVE cell and is not tradeable. |
 
 **Distinct configurations tried: 2.** Runs 1 to 10 are the same frozen parameter set
@@ -82,6 +83,59 @@ concentration failure is a property of what was measured, not of how much." The 
 was right, the reasoning was half wrong. Concentration was not the mechanism; on the larger
 sample concentration improved (9.2% versus 24.5%) while the result got worse. The 11-month
 sample was not hiding a fragile edge, it was hiding a negative one.
+
+---
+
+## Registered BEFORE execution: run 16 (Leg D, overnight hold)
+
+Registered before the strategy was written.
+
+| Field | Value |
+|---|---|
+| Instrument | MES, prices from ES, same dataset as runs 9-15 |
+| Entry | first bar of the Globex session, within 30 minutes of 18:00 ET. **Long only.** |
+| Exit | the 09:30 ET open, by CLOCK not by bar count |
+| Stop | $500/contract disaster brake, about 4 measured session sd. Not a signal parameter. |
+| Size | **fixed at 1 contract.** The R sizer correctly refuses a 100-point stop. |
+| Split | development. Validation and lockbox remain **UNTOUCHED**. |
+
+**Run 15 prediction check: 4 for 4, the first clean sweep.** Registered beforehand:
+GLOBEX_TO_OPEN positive (+2.68 pts, right), RTH flat or negative (-0.33, right), overnight
+t between 1 and 3 (2.15 gross, right), and at least one session above 25% of the MLL
+buffer (worst was 43%, right).
+
+**The correction that matters more than the prediction.** The tool printed t = 2.15 on the
+GROSS mean. Cost is a constant per session, so it moves the mean without touching the
+standard deviation, and the **net t is 1.35**, one-sided p about 0.09 with the direction
+pre-registered, about 0.35 once the four windows are Bonferroni-corrected. **The overnight
+effect is NOT statistically significant after costs on this sample.** The tool now prints
+both and says to read the net one.
+
+**Economics, computed before the backtest.**
+
+| size | worst night | as % of MLL | months to $3,000 | P(breach) | P(pass) |
+|---|---:|---:|---:|---:|---:|
+| 1 | -$851 | 43% | 16.9 | 23% | 63% |
+| 2 | -$1,702 | 85% | 8.4 | 47% | 53% |
+| 3 | -$2,553 | **128%, dies in one night** | 5.6 | 53% | 47% |
+
+Monte Carlo on the measured net moments (mean $8.47, sd $123 per session) under the
+end-of-day trailing MLL, normal returns, so the real fat left tail makes it optimistic.
+**One contract is the only survivable size, and it is a 63/23 gamble taking 17 months.**
+
+**Session sd is $123 against $8.47 of drift.** The whole development result is 1.36 sd
+from zero, and 840 sessions, three and a half years, would be needed for the drift to
+clear two standard deviations of noise. This sample cannot settle it either way.
+
+**The largest open risk is the overnight SPREAD.** The $4.95 round trip is the all-day
+measured figure, dominated by RTH. Leg D enters at 18:00 ET, the thinnest moment of the
+day. If the true overnight round trip is $8 rather than $4.95, net expectancy falls from
+$8.47 to about $5.40 and everything above gets worse. `--cost-session ASIA` now exists to
+measure it, and that check comes before the backtest is believed.
+
+**Prediction.** With prop rules on and one contract, the account survives the development
+split but the maximum drawdown exceeds half the MLL buffer, and the run does not reach the
+$3,000 target inside 387 sessions.
 
 ---
 

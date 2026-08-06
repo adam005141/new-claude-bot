@@ -91,6 +91,18 @@ def size_position(stop_points: float, inst: Instrument, risk: RiskParams,
         return SizingResult(0, 0.0, 0.0, target, "NON_POSITIVE_STOP")
 
     per_contract = stop_points * inst.point_value
+
+    if risk.fixed_contracts is not None:
+        # Scheduled exposure, sized by what the account can survive rather than by a stop
+        # distance. Bypassing the R sizer here is deliberate and narrow: Leg D's stop is a
+        # disaster brake four standard deviations out, so per-contract risk far exceeds the
+        # R target and the sizer would correctly refuse a trade that is not actually
+        # risking that much in any normal night. The realised risk is still recorded on
+        # every trade, so the deviation from target stays visible rather than hidden.
+        q = max(0, int(risk.fixed_contracts))
+        if q < 1:
+            return SizingResult(0, per_contract, 0.0, target, "FIXED_SIZE_ZERO")
+        return SizingResult(q, per_contract, q * per_contract, target)
     if per_contract <= 0:
         return SizingResult(0, per_contract, 0.0, target, "NON_POSITIVE_RISK")
 

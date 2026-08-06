@@ -69,6 +69,8 @@ class Position:
     target_distance_points: float
     risk_usd: float
     bars_held: int = 0
+    # Clock exit in minutes since the 09:30 ET open, or None for a bar-count time stop.
+    exit_by_mso: float | None = None
 
     def open_pnl_points(self, mark: float) -> float:
         return (mark - self.entry_price) * self.side.sign

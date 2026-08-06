@@ -162,6 +162,15 @@ class StrategyParams:
     theta_rvol: float = 1.10              # range 0.8-2.0
     rv_lo: float = 0.20                   # range 0.0-0.5
     rv_hi: float = 0.80                   # range 0.5-1.0
+    # --- Leg D: overnight hold ------------------------------------------------
+    # A scheduled exposure, not a prediction. Every value here is derived from the LOSS
+    # BUFFER or from the clock, never from a result.
+    overnight_entry_window_minutes: int = 30   # range 5-120  after the 18:00 ET open
+    overnight_exit_mso: float = 0.0            # range -60-60  0.0 is the 09:30 ET open
+    # Disaster brake at roughly four measured session standard deviations (24.5 points).
+    # Far enough out that ordinary overnight variation never touches it, close enough that
+    # one night cannot take more than a quarter of the $2,000 buffer at one contract.
+    overnight_stop_usd: float = 500.0          # range 100-1500 per contract
     # --- Leg C: gap fade toward the prior cash close --------------------------
     # Measured in units of the OVERNIGHT RANGE, not of the 5-minute ATR.
     #
@@ -217,6 +226,9 @@ class StrategyParams:
             ("theta_rvol", self.theta_rvol, 0.8, 2.0),
             ("rv_lo", self.rv_lo, 0.0, 0.5),
             ("rv_hi", self.rv_hi, 0.5, 1.0),
+            ("overnight_entry_window_minutes", self.overnight_entry_window_minutes, 5, 120),
+            ("overnight_exit_mso", self.overnight_exit_mso, -60.0, 60.0),
+            ("overnight_stop_usd", self.overnight_stop_usd, 100.0, 1500.0),
             ("gap_min_range", self.gap_min_range, 0.05, 1.0),
             ("gap_max_range", self.gap_max_range, 0.5, 3.0),
             ("gap_window_minutes", self.gap_window_minutes, 5, 60),
@@ -264,6 +276,11 @@ class RiskParams:
     corr_lookback_sessions: int = 20
     mu_min: float = 0.25                  # required net-expectancy margin
     max_contracts_per_instrument: int = 4
+    # When set, position size is FIXED and the R-based sizer is bypassed. Leg D needs it:
+    # its stop is a disaster brake four standard deviations out, so R-based sizing would
+    # compute risk-per-contract far above the $100 target and refuse to trade at all. A
+    # scheduled exposure is sized by what the account can survive, not by a stop distance.
+    fixed_contracts: int | None = None
     # Flat before the CME daily halt at 17:00 ET (14:00 Pacific), NOT at the cash close.
     # 16:50 leaves ten minutes to exit into a book that is still liquid rather than
     # market-ordering into the last print before a halt.
@@ -345,8 +362,8 @@ class EngineConfig:
 
     def __post_init__(self) -> None:
         self.strategy.validate()
-        if self.leg not in ("A", "B", "C"):
-            raise ValueError(f"unknown leg {self.leg!r}; expected 'A', 'B' or 'C'.")
+        if self.leg not in ("A", "B", "C", "D"):
+            raise ValueError(f"unknown leg {self.leg!r}; expected 'A', 'B', 'C' or 'D'.")
         if self.cost_scenario not in COST_SCENARIOS:
             raise ValueError(f"unknown cost scenario {self.cost_scenario!r}")
         for s in self.symbols:
