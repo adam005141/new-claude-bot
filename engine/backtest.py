@@ -27,10 +27,10 @@ from .risk import RiskEngine, RiskState
 from .sessions import ET, classify_index, is_tradable, SessionCalendar
 from .sizing import size_position
 from .strategy import (
-    OpeningRangeBreakout, Rejection, SessionState, Signal, VWAPBandReversion,
+    GapFade, OpeningRangeBreakout, Rejection, SessionState, Signal, VWAPBandReversion,
 )
 
-LEGS = {"A": VWAPBandReversion, "B": OpeningRangeBreakout}
+LEGS = {"A": VWAPBandReversion, "B": OpeningRangeBreakout, "C": GapFade}
 
 log = logging.getLogger(__name__)
 

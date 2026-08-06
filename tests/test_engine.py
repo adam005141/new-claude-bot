@@ -993,3 +993,183 @@ def test_leg_a_backtest_runs_and_is_deterministic():
     a = Backtester(cfg, "MES").run(feats)
     b = Backtester(cfg, "MES").run(feats)
     pd.testing.assert_frame_equal(a.trades_frame(), b.trades_frame())
+
+
+# ---------------------------------------------------------------------------
+# Overnight, gap and prior-session structure
+# ---------------------------------------------------------------------------
+
+def _overnight_market(days: int = 25, seed: int = 3, start: str = "2026-03-02"):
+    """Sessions that actually contain a Globex overnight, 18:00 ET through 16:00 ET."""
+    from engine.sessions import session_dates
+    rng = np.random.default_rng(seed)
+    frames, d = [], pd.Timestamp(start)
+    while len(frames) < days:
+        if d.weekday() >= 5:
+            d += timedelta(days=1)
+            continue
+        first = pd.Timestamp(f"{(d - timedelta(days=1)).date()} 18:00",
+                             tz=ET).tz_convert("UTC")
+        n = 22 * 12
+        steps = rng.normal(0, 1.2, n)
+        close = 5800 + np.cumsum(steps)
+        frames.append(pd.DataFrame({
+            "timestamp_utc": pd.date_range(first, periods=n, freq="5min", tz="UTC"),
+            "open": close - steps, "high": close + abs(rng.normal(0, .8, n)),
+            "low": close - abs(rng.normal(0, .8, n)), "close": close,
+            "volume": rng.integers(200, 2000, n).astype(float),
+            "symbol": "MES", "contract_month": "202603", "entries_blocked": False,
+        }))
+        d += timedelta(days=1)
+    df = pd.concat(frames, ignore_index=True)
+    df["session_date"] = session_dates(pd.DatetimeIndex(df["timestamp_utc"])).values
+    return df
+
+
+def test_minutes_since_open_is_negative_before_the_open_across_the_1800_boundary():
+    """
+    The bug this replaced: wall-clock arithmetic put an 18:00 ET bar at +510 minutes AFTER
+    its session's open instead of -930 before it. Every overnight feature would inherit it.
+    """
+    from engine.overnight import minutes_since_open
+    df = _overnight_market(5)
+    mso = minutes_since_open(df)
+    et = pd.DatetimeIndex(df["timestamp_utc"]).tz_convert(ET)
+    for hhmm, expected in (("18:00", -930), ("22:00", -690), ("02:00", -450),
+                           ("09:30", 0), ("15:55", 385)):
+        got = mso[et.strftime("%H:%M") == hhmm]
+        assert (got == expected).all(), f"{hhmm} ET gave {got.unique()}, expected {expected}"
+
+
+def test_minutes_since_open_survives_a_dst_transition():
+    """US DST moved on 2026-03-08. A fixed offset would shift every session by an hour."""
+    from engine.overnight import minutes_since_open
+    df = _overnight_market(8, start="2026-03-04")
+    mso = minutes_since_open(df)
+    et = pd.DatetimeIndex(df["timestamp_utc"]).tz_convert(ET)
+    at_open = mso[et.strftime("%H:%M") == "09:30"]
+    assert (at_open == 0).all(), "09:30 ET is minute zero in both DST regimes"
+
+
+def test_overnight_levels_are_blank_until_the_open_and_frozen_after():
+    df = _overnight_market(10)
+    feats = compute(df, or_minutes=30, atr_window=14, rvol_lookback=20)
+    for sd, g in feats.groupby("session_date"):
+        pre = g[g["minutes_since_open"] < 0]
+        post = g[g["minutes_since_open"] >= 0]
+        if pre.empty or post.empty:
+            continue
+        assert pre["on_high"].isna().all(), "a forming overnight high must not be visible"
+        assert not pre["on_ready"].any(), "on_ready must be False before the open"
+        assert post["on_high"].nunique() == 1, "overnight high must freeze at the open"
+        assert post["on_high"].iloc[0] == pytest.approx(pre["high"].max())
+        assert post["on_low"].iloc[0] == pytest.approx(pre["low"].min())
+
+
+def test_gap_is_measured_against_the_prior_session_cash_close():
+    df = _overnight_market(10)
+    feats = compute(df, or_minutes=30, atr_window=14, rvol_lookback=20)
+    sessions = sorted(feats["session_date"].unique())
+    prev, cur = sessions[3], sessions[4]
+    p = feats[feats["session_date"] == prev]
+    p_rth = p[(p["minutes_since_open"] >= 0) & (p["minutes_since_open"] < 390)]
+    c = feats[(feats["session_date"] == cur) & (feats["minutes_since_open"] >= 0)]
+    expected = c["open"].iloc[0] - p_rth["close"].iloc[-1]
+    assert c["gap_points"].iloc[0] == pytest.approx(expected)
+
+
+def test_overnight_features_never_reference_future_bars():
+    df = _overnight_market(12)
+    full = compute(df, or_minutes=30, atr_window=14, rvol_lookback=20)
+    cut = int(len(df) * 0.7)
+    trunc = compute(df.iloc[:cut].copy(), or_minutes=30, atr_window=14, rvol_lookback=20)
+    # The final session of the truncated frame is genuinely incomplete, so compare only
+    # sessions that are whole in both.
+    whole = set(trunc["session_date"].unique()) - {trunc["session_date"].iloc[-1]}
+    a = full[full["session_date"].isin(whole)].reset_index(drop=True)
+    b = trunc[trunc["session_date"].isin(whole)].reset_index(drop=True)
+    for col in ("on_high", "on_low", "on_range", "gap_points", "prior_rth_close",
+                "dist_on_high_atr", "on_pos", "minutes_since_open"):
+        assert np.allclose(a[col].to_numpy(dtype=float), b[col].to_numpy(dtype=float),
+                           equal_nan=True), f"{col} depends on future bars"
+
+
+# ---------------------------------------------------------------------------
+# Leg C: opening gap fade
+# ---------------------------------------------------------------------------
+
+def _leg_c_row(**over):
+    row = {
+        "close": 5810.0, "prior_rth_close": 5800.0, "gap_vs_on_range": 0.5,
+        "atr": 6.67, "minutes_since_open": 0.0, "on_ready": True,
+        "entries_blocked": False,
+    }
+    row.update(over)
+    return row
+
+
+def _leg_c(params: StrategyParams | None = None):
+    from engine.strategy import GapFade
+    return GapFade(params or StrategyParams(), MES, RiskParams(), COST_ADVERSE)
+
+
+def test_leg_c_fades_the_gap_toward_the_prior_cash_close():
+    from engine.strategy import Signal
+    leg = _leg_c()
+    up = leg.evaluate(_leg_c_row(), SessionState())
+    assert isinstance(up, Signal) and up.side is Side.SHORT
+    assert up.target_distance_points == pytest.approx(10.0)   # 5810 close - 5800 prior
+
+    down = leg.evaluate(_leg_c_row(close=5790.0, gap_vs_on_range=-0.5), SessionState())
+    assert isinstance(down, Signal) and down.side is Side.LONG
+    assert down.target_distance_points == pytest.approx(10.0)
+
+
+def test_leg_c_will_not_chase_a_gap_that_has_already_filled():
+    """If price has crossed back through the prior close the move is gone, not available."""
+    leg = _leg_c()
+    assert leg.evaluate(_leg_c_row(close=5795.0), SessionState()) is None
+    assert leg.evaluate(_leg_c_row(close=5805.0, gap_vs_on_range=-0.5), SessionState()) is None
+
+
+def test_leg_c_band_excludes_noise_below_and_news_above():
+    from engine.strategy import Rejection
+    leg = _leg_c()
+    small = leg.evaluate(_leg_c_row(gap_vs_on_range=0.10), SessionState())
+    assert isinstance(small, Rejection) and small.reason == "GAP_TOO_SMALL"
+    huge = leg.evaluate(_leg_c_row(gap_vs_on_range=1.8), SessionState())
+    assert isinstance(huge, Rejection) and huge.reason == "GAP_TOO_LARGE"
+
+
+def test_leg_c_only_fires_near_the_open():
+    leg = _leg_c()
+    assert leg.evaluate(_leg_c_row(minutes_since_open=10.0), SessionState()) is not None
+    assert leg.evaluate(_leg_c_row(minutes_since_open=45.0), SessionState()) is None
+    assert leg.evaluate(_leg_c_row(minutes_since_open=-30.0), SessionState()) is None
+
+
+def test_leg_c_takes_one_trade_per_session():
+    """There is only one opening gap. A second attempt is a different trade."""
+    leg = _leg_c()
+    assert leg.evaluate(_leg_c_row(), SessionState(entries=1)) is None
+
+
+def test_leg_c_refuses_before_the_overnight_range_is_complete():
+    leg = _leg_c()
+    assert leg.evaluate(_leg_c_row(on_ready=False), SessionState()) is None
+
+
+def test_inverted_gap_band_is_rejected_by_config():
+    with pytest.raises(ValueError, match="gap_min_range"):
+        StrategyParams(gap_min_range=0.9, gap_max_range=0.6).validate()
+
+
+def test_leg_c_runs_end_to_end_and_is_deterministic():
+    cfg = EngineConfig(symbols=("MES",), leg="C")
+    feats = compute(_overnight_market(30), or_minutes=30, atr_window=14, rvol_lookback=20)
+    a = Backtester(cfg, "MES").run(feats)
+    b = Backtester(cfg, "MES").run(feats)
+    pd.testing.assert_frame_equal(a.trades_frame(), b.trades_frame())
+    trades = a.trades_frame()
+    if not trades.empty:
+        assert (trades.groupby("session_date").size() <= 1).all(), "one gap trade per session"

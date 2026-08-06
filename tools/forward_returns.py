@@ -93,6 +93,18 @@ FEATURES = (
     "realized_vol",
     "minutes_since_open",
     "bar_of_session",
+    # Overnight, gap and prior-session structure. Added 2026-08-06 because the first
+    # screen's real limitation was not its method but its inputs: every feature above is
+    # computed from RTH bars of the session being traded, which ignored roughly fifteen
+    # hours per session that the engine already had bars for.
+    "gap_atr",             # RTH open vs prior cash close, in ATR
+    "gap_vs_on_range",     # the same gap as a fraction of the overnight range
+    "on_range_atr",        # was the night wide or quiet
+    "on_range_norm",       # ... relative to recent nights. The volatility-clustering control.
+    "on_pos",              # where price sits in the overnight range; outside [0,1] is a break
+    "dist_on_high_atr",
+    "dist_on_low_atr",
+    "prior_close_pos",     # where the prior cash close sat in the prior day's range
 )
 CATEGORICAL = ("regime",)
 

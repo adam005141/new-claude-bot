@@ -162,6 +162,27 @@ class StrategyParams:
     theta_rvol: float = 1.10              # range 0.8-2.0
     rv_lo: float = 0.20                   # range 0.0-0.5
     rv_hi: float = 0.80                   # range 0.5-1.0
+    # --- Leg C: gap fade toward the prior cash close --------------------------
+    # Measured in units of the OVERNIGHT RANGE, not of the 5-minute ATR.
+    #
+    # The first draft used ATR and was a units error of the same kind as the old
+    # or_width/ATR filter. A gap is an overnight move; a 5-minute ATR is a 5-minute move.
+    # Their ratio grows with the square root of the number of bars in a night, so a fixed
+    # ATR threshold encodes the decision timeframe rather than the market. On the measured
+    # median ES ATR of 2.31 points an ordinary 10-point gap scores 4.3, which the intended
+    # 3.0 cap would have rejected as "news" for no reason connected to news.
+    #
+    # The overnight range is the natural denominator: it is a daily-scale quantity, it is
+    # complete before the open, and the comparison it expresses is meaningful on its own
+    # terms. Did the gap consume a fraction of the night's range, or all of it?
+    #
+    # Below gap_min the move cannot pay its own round trip. Above gap_max the gap is
+    # larger than the entire night that produced it, which is a repricing event, and this
+    # leg explicitly does not claim to trade those.
+    gap_min_range: float = 0.25           # range 0.05-1.0
+    gap_max_range: float = 1.00           # range 0.5-3.0
+    # Minutes, not bars, so the window means the same thing at any decision timeframe.
+    gap_window_minutes: int = 15          # range 5-60   how long after the open it may fire
     # --- Leg B: opening range breakout ----------------------------------------
     or_minutes: int = 30                  # range 5-60      HIGH OVERFIT RISK
     b_buffer_atr: float = 0.25            # range 0.0-1.0
@@ -196,6 +217,9 @@ class StrategyParams:
             ("theta_rvol", self.theta_rvol, 0.8, 2.0),
             ("rv_lo", self.rv_lo, 0.0, 0.5),
             ("rv_hi", self.rv_hi, 0.5, 1.0),
+            ("gap_min_range", self.gap_min_range, 0.05, 1.0),
+            ("gap_max_range", self.gap_max_range, 0.5, 3.0),
+            ("gap_window_minutes", self.gap_window_minutes, 5, 60),
             ("or_minutes", self.or_minutes, 5, 60),
             ("b_buffer_atr", self.b_buffer_atr, 0.0, 1.0),
             ("or_max_width_norm", self.or_max_width_norm, 0.5, 4.0),
@@ -223,6 +247,12 @@ class StrategyParams:
             )
         if self.rv_lo >= self.rv_hi:
             raise ValueError(f"rv_lo={self.rv_lo} must be below rv_hi={self.rv_hi}")
+        if self.gap_min_range >= self.gap_max_range:
+            raise ValueError(
+                f"gap_min_range={self.gap_min_range} must be below "
+                f"gap_max_range={self.gap_max_range}. Leg C trades the band between them; "
+                "inverting the bounds would make it trade nothing while appearing valid."
+            )
 
 
 @dataclass(frozen=True)
@@ -312,9 +342,8 @@ class EngineConfig:
 
     def __post_init__(self) -> None:
         self.strategy.validate()
-        if self.leg not in ("A", "B"):
-            raise ValueError(f"unknown leg {self.leg!r}; expected 'A' or 'B'. "
-                             "Leg C is specified but not implemented.")
+        if self.leg not in ("A", "B", "C"):
+            raise ValueError(f"unknown leg {self.leg!r}; expected 'A', 'B' or 'C'.")
         if self.cost_scenario not in COST_SCENARIOS:
             raise ValueError(f"unknown cost scenario {self.cost_scenario!r}")
         for s in self.symbols:

@@ -15,7 +15,7 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
-from . import regime
+from . import overnight, regime
 from .sessions import ET, minutes_since_rth_open, session_dates
 
 
@@ -78,21 +78,24 @@ def realized_vol(df: pd.DataFrame, window: int = 30) -> pd.Series:
     return logret.rolling(window, min_periods=window).std()
 
 
-def opening_range(df: pd.DataFrame, or_minutes: int, bar_minutes: int = 5) -> pd.DataFrame:
+def opening_range(df: pd.DataFrame, or_minutes: int, bar_minutes: int = 5,
+                  mso: pd.Series | None = None) -> pd.DataFrame:
     """
     High and low of the first `or_minutes` after 09:30 ET, per session.
 
     Values become available only AFTER the window closes. Before that the columns are
     NaN, which is what stops the leg firing on a range that has not finished forming.
     `or_ready` is the explicit gate the strategy checks.
+
+    `mso` comes from `overnight.minutes_since_open`, which measures against the session a
+    bar belongs to rather than against the wall clock. The clock-only arithmetic this
+    function used before placed an 18:00 ET bar at +510 minutes after the open instead of
+    -930 before it. Leg B was unaffected because `or_high` is NaN for those bars and
+    `or_ready` requires both conditions, but the exported `minutes_since_open` column was
+    wrong for every overnight bar, and the overnight features would have inherited it.
     """
-    ts = pd.DatetimeIndex(df["timestamp_utc"])
-    et = ts.tz_convert(ET)
-    open_min = pd.Series(
-        (et.hour * 60 + et.minute) - (9 * 60 + 30), index=df.index, dtype="float64"
-    )
-    # Bars from the prior evening belong to this session but precede its RTH open.
-    open_min[open_min < -600] += 1440
+    open_min = (mso if mso is not None
+                else overnight.minutes_since_open(df)).astype("float64")
 
     in_window = (open_min >= 0) & (open_min < or_minutes)
     sd = df["session_date"]
@@ -189,9 +192,17 @@ def compute(df: pd.DataFrame, *, or_minutes: int, atr_window: int,
     out["vwap_slope"] = vwap_slope(out["vwap"], out["atr"], sd)
     out["bar_of_session"] = out.groupby(sd, sort=False).cumcount()
 
-    out = pd.concat([out, opening_range(out, or_minutes, bar_minutes)], axis=1)
+    mso = overnight.minutes_since_open(out)
+    out = pd.concat([out, opening_range(out, or_minutes, bar_minutes, mso=mso)], axis=1)
     out["or_width_norm"] = normalise_or_width(out["or_width"], out["atr"],
                                               out["or_bars"].iloc[0])
+
+    # Overnight, gap and prior-session structure. Attached last because it needs ATR, and
+    # `minutes_since_open` is overwritten with the session-aware version rather than the
+    # wall-clock one the opening range used to export.
+    on = overnight.compute(out, out["atr"], lookback=rvol_lookback)
+    out = pd.concat([out.drop(columns=[c for c in on.columns if c in out.columns]), on],
+                    axis=1)
 
     # Volatility percentile against a trailing distribution of PRIOR sessions only.
     per_session_rv = out.groupby(sd)["realized_vol"].mean()

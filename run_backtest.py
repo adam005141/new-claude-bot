@@ -75,11 +75,12 @@ def main(argv=None) -> int:
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--data", default="data")
     ap.add_argument("--symbols", nargs="+", default=["MES", "MNQ"])
-    ap.add_argument("--leg", choices=["A", "B"], default="B",
+    ap.add_argument("--leg", choices=["A", "B", "C"], default="B",
                     help="A = VWAP band reversion (RANGE regime only), "
-                         "B = opening range breakout. One leg per run: each regime route "
-                         "reports its own sample size, so a losing leg cannot hide inside "
-                         "a combined statistic.")
+                         "B = opening range breakout, C = opening gap fade toward the "
+                         "prior cash close. One leg per run: each route reports its own "
+                         "sample size, so a losing leg cannot hide inside a combined "
+                         "statistic.")
     ap.add_argument("--split", choices=sorted(SPLITS), default="dev")
     ap.add_argument("--cost-scenario", choices=["base", "adverse", "severe"], default="adverse")
     ap.add_argument("--decision-minutes", type=int, default=5)
@@ -130,7 +131,8 @@ def main(argv=None) -> int:
         cfg.prop = replace(cfg.prop, enabled=False)
 
     cost_source = "MEASURED" if args.measured_costs else "ASSUMED"
-    leg_name = {"A": "A VWAP band reversion", "B": "B opening range breakout"}[args.leg]
+    leg_name = {"A": "A VWAP band reversion", "B": "B opening range breakout",
+                "C": "C opening gap fade"}[args.leg]
     print(f"engine {__version__} | leg={leg_name} | split={args.split} | "
           f"costs={args.cost_scenario} ({cost_source}) | "
           f"prop={'off' if args.no_prop else 'on'}")

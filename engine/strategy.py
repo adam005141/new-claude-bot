@@ -74,6 +74,111 @@ class SessionState:
         self.last_exit_bar = bar_index
 
 
+class GapFade:
+    """
+    Leg C. Fade the opening gap back toward the prior cash close.
+
+    Economic thesis: an overnight gap is priced on Globex liquidity, which is a fraction
+    of RTH. When US participants arrive at 09:30 the level gets tested, and a gap created
+    by thin-book repositioning rather than by information tends to be given back. The
+    prior cash close is the reference the whole market shares, which is what makes it a
+    place where resting orders actually sit.
+
+    The competing explanation, which the band exists to separate: a gap IS information,
+    priced correctly overnight, in which case fading it is betting against news. That is
+    why `gap_max_range` caps the leg. A gap wider than the entire night that produced it
+    is a repricing event, and this leg explicitly does not claim to trade it.
+
+    Structurally distinct from both dead legs, which matters because otherwise this is a
+    third draw from the same urn:
+
+      Leg B  continuation from a range formed INSIDE the session         FAILED
+      Leg A  reversion to a statistical mean recomputed every bar        FAILED
+      Leg C  reversion to a FIXED level set before the session opened,
+             fired once, at a known time, on information neither of the
+             others could see
+
+    It also fires at a fixed clock time rather than waiting for a setup, so the trade
+    count is roughly one per session and is known in advance rather than discovered.
+    """
+
+    name = "GAP_FADE"
+
+    def __init__(self, params: StrategyParams, inst: Instrument,
+                 risk: RiskParams, costs: CostModel):
+        self.p = params
+        self.inst = inst
+        self.risk = risk
+        self.costs = costs
+
+    def evaluate(self, row, state: SessionState,
+                 bar_index: int = 0) -> Signal | Rejection | None:
+        # One gap per session. Unlike the other legs this is not a re-entry policy
+        # choice: there is only one opening gap, so a second attempt would be a
+        # different trade wearing this leg's name.
+        if state.entries >= 1:
+            return None
+
+        mso = row.get("minutes_since_open")
+        atr_ = row.get("atr")
+        gap_ratio = row.get("gap_vs_on_range")
+        prior_close = row.get("prior_rth_close")
+        if any(v is None or v != v for v in (mso, atr_, gap_ratio, prior_close)):
+            return None
+        if atr_ <= 0:
+            return None
+        if not bool(row.get("on_ready", False)):
+            return None
+
+        # Only in the first few bars of the cash session. The thesis is about the open
+        # being tested, not about a level that has been available for hours.
+        if mso < 0 or mso >= self.p.gap_window_minutes:
+            return None
+
+        close = row["close"]
+        # DIRECTION FIRST, then filters, so the rejection counters stay comparable with
+        # the other two legs.
+        if gap_ratio > 0 and close > prior_close and self.p.allow_short:
+            side = Side.SHORT           # gapped up, fade down toward the close
+        elif gap_ratio < 0 and close < prior_close and self.p.allow_long:
+            side = Side.LONG            # gapped down, fade up toward the close
+        else:
+            # Either no gap, or price has already travelled back through the prior close,
+            # in which case the move this leg exists to capture has happened without it.
+            return None
+
+        if bool(row.get("entries_blocked", False)):
+            return Rejection("ROLL_OR_EXPIRY")
+
+        size = abs(gap_ratio)
+        if size < self.p.gap_min_range:
+            return Rejection("GAP_TOO_SMALL")
+        if size > self.p.gap_max_range:
+            return Rejection("GAP_TOO_LARGE")
+
+        # Target is the gap fill: the prior cash close, unmoved and known before the open.
+        target_pts = abs(close - prior_close)
+        stop_pts = stop_distance(atr_, self.inst, self.p.m_stop_atr, self.p.min_stop_ticks)
+
+        floor = expected_move_floor(self.inst, self.costs, self.risk.mu_min)
+        if target_pts < floor:
+            return Rejection("MOVE_FLOOR")
+
+        entry = close
+        stop = entry - side.sign * stop_pts
+        target = entry + side.sign * target_pts
+
+        return Signal(
+            side=side,
+            trigger_price=entry,
+            stop_price=self.inst.round_to_tick(stop),
+            target_price=self.inst.round_to_tick(target),
+            stop_distance_points=stop_pts,
+            target_distance_points=target_pts,
+            reason=f"GAPFADE_{side.value}",
+        )
+
+
 class VWAPBandReversion:
     """
     Leg A. Stateless evaluator, same contract as Leg B.

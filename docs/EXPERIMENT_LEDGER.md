@@ -56,6 +56,80 @@ sample was not hiding a fragile edge, it was hiding a negative one.
 
 ---
 
+## Registered BEFORE execution: runs 12 and 13 (Leg C)
+
+Recorded before the strategy was written, and before the extended screen was run. Nothing
+below has been executed.
+
+### Run 12: the gate
+
+The forward-return screen, re-run with the **overnight, gap and prior-session** feature
+family added. That family is the reason a third leg is worth attempting at all: every
+feature in the first screen was computed from RTH bars of the session being traded, which
+ignored roughly fifteen hours per session that the engine already had bars for.
+
+| Field | Value |
+|---|---|
+| Tool | `tools/forward_returns.py`, unchanged method, 8 new features |
+| New features | `gap_atr`, `gap_vs_on_range`, `on_range_atr`, `on_range_norm`, `on_pos`, `dist_on_high_atr`, `dist_on_low_atr`, `prior_close_pos` |
+| Cells | ~460, up from 260 |
+| Split | development only |
+
+`on_range_norm` is the **control for the competing explanation.** If an apparent overnight
+level effect is really volatility clustering wearing a costume, it shows up there and not
+in the distance features. That distinction is the point of including it.
+
+### Run 13: Leg C, opening gap fade
+
+| Field | Value |
+|---|---|
+| Instrument | MES, prices from ES, same dataset as runs 9-11 |
+| Entry | first bar of RTH within `gap_window_minutes`, fading toward the prior cash close |
+| Direction | gap up to SHORT, gap down to LONG. One trade per session. |
+| Band | `0.25 <= abs(gap) / overnight_range <= 1.00` |
+| Target | the prior RTH cash close, fixed before the session opened |
+| Stop, time stop, floor | unchanged from Legs A and B |
+| Split | development. Validation and lockbox remain **UNTOUCHED**. |
+
+**Why this is not a third draw from the same urn.** Leg B was continuation from a range
+formed inside the session. Leg A was reversion to a statistical mean recomputed every bar.
+Leg C reverts to a **fixed level set before the session opened**, fires once at a known
+clock time, and reads information neither of the others could see. It is a different
+anchor, a different trigger mechanism, and a different information set.
+
+**Design correction made BEFORE any Leg C result existed, recorded so it is not mistaken
+for tuning.** The band was first written as `0.75 <= abs(gap_atr) <= 3.00`, in units of the
+5-minute ATR. That is a units error of exactly the kind that broke `or_max_width_atr`: a
+gap is an overnight move and an ATR is a 5-minute move, so their ratio scales with the
+square root of the bars in a night. On the measured median ES ATR of 2.31 points an
+ordinary 10-point gap scores 4.3 and would have been rejected as "news". The synthetic
+check showed it: 288 `GAP_TOO_LARGE` against 15 trades. The denominator is now the
+overnight range, which is daily-scale, complete before the open, and meaningful on its own
+terms. **No P&L was seen at any point in making this change.**
+
+**Trial count: 3.** A nominal p of 0.05 now corresponds to a family-wise 0.14.
+
+**Power, stated before the result.** Expected ~0.4-0.5 trades per session, so roughly
+**150-190 trades on dev, which is BELOW the 200-trade gate.** This is known in advance and
+is a property of the design: there is only one opening gap per day. Run 13 therefore
+**cannot** produce a decisive positive on its own.
+
+**Pre-commitment, so the decision is not made after seeing the number.**
+
+- If dev expectancy is negative: Leg C is closed. No validation spend.
+- If dev expectancy is positive and the CI excludes zero: still not a result at n<200.
+  The parameters are frozen exactly as they stand and **validation is spent once** as a
+  genuine out-of-sample test. That is what validation is for.
+- If dev is positive but the CI straddles zero: closed as undetectable. **No validation
+  spend**, because confirming an undetectable effect is not something validation can do.
+
+**Prediction, recorded before the run so it can be wrong.** The screen finds nothing at
+family-wise p < 0.05, and Leg C returns an expectancy indistinguishable from zero with a
+CI straddling it. My previous three predictions ran two right on direction and one badly
+wrong on mechanism, so this is worth what that record says it is worth.
+
+---
+
 ## Registered BEFORE execution: run 11 (Leg A)
 
 Recorded here before the code was written, not merely before it was run. Nothing below has
