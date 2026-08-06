@@ -1173,3 +1173,73 @@ def test_leg_c_runs_end_to_end_and_is_deterministic():
     trades = a.trades_frame()
     if not trades.empty:
         assert (trades.groupby("session_date").size() <= 1).all(), "one gap trade per session"
+
+
+# ---------------------------------------------------------------------------
+# Overnight trading: session enablement and the flat rule
+# ---------------------------------------------------------------------------
+
+def test_the_futures_hour_after_the_cash_close_is_tradable():
+    """
+    16:00-17:00 ET is 15:00-16:00 CT and the contract is open. It used to classify CLOSED,
+    which silently removed a tradable hour from every screen.
+    """
+    from engine.sessions import Session as S
+    ts = pd.Timestamp("2026-03-04 16:30", tz=ET).tz_convert("UTC")
+    assert classify(ts) == S.POST_CLOSE
+    assert S.POST_CLOSE in __import__("engine.sessions", fromlist=["x"]).DEFAULT_ENABLED
+
+
+def test_the_daily_halt_is_never_tradable():
+    """17:00-18:00 ET is the CME break, which is the user's 14:00-15:00 Pacific."""
+    from engine.sessions import Session as S, DEFAULT_ENABLED as EN
+    assert S.MAINTENANCE not in EN
+    assert S.CLOSED not in EN
+    ts = pd.Timestamp("2026-03-04 17:30", tz=ET).tz_convert("UTC")
+    assert classify(ts) == S.MAINTENANCE
+
+
+def test_overnight_sessions_are_now_enabled():
+    from engine.sessions import Session as S, DEFAULT_ENABLED as EN, RTH_ONLY
+    for s in (S.ASIA, S.LONDON, S.EU_NY_OVERLAP, S.NY_PREMARKET):
+        assert s in EN, f"{s} must be tradable now that overnight holds are allowed"
+    assert RTH_ONLY < EN, "RTH_ONLY is kept so pre-2026-08-06 results stay reproducible"
+
+
+def test_flat_time_precedes_the_halt_not_the_cash_close():
+    cfg = EngineConfig()
+    assert cfg.risk.flat_time_et == time(16, 50)
+    assert cfg.risk.flat_time_et < time(17, 0), "must be flat BEFORE the CME break"
+
+
+def test_a_position_still_never_crosses_a_session_boundary():
+    """
+    The invariant survives the rule change, and that is the point: the 17:00 flat
+    requirement lands on the 18:00 session roll, so allowing overnight holds lengthens the
+    leash inside a session without ever letting one span two.
+    """
+    cfg = EngineConfig(symbols=("MES",), leg="C")
+    feats = compute(_overnight_market(20), or_minutes=30, atr_window=14, rvol_lookback=20)
+    trades = Backtester(cfg, "MES").run(feats).trades_frame()
+    if trades.empty:
+        pytest.skip("no trades on this synthetic sample")
+    entry_sd = pd.to_datetime(trades["entry_time"]).map(session_date)
+    exit_sd = pd.to_datetime(trades["exit_time"]).map(session_date)
+    assert (entry_sd == exit_sd).all()
+
+
+def test_session_windows_cover_every_tradable_minute():
+    """
+    A gap in the window map silently deletes tradable time. Sweep the clock and assert
+    that the only unclassified minutes are the halt itself.
+    """
+    from engine.sessions import Session as S
+    idx = pd.date_range("2026-03-04 00:00", periods=24 * 60, freq="1min", tz=ET)
+    named = classify_index(pd.DatetimeIndex(idx).tz_convert("UTC"))
+    et = idx
+    for s, t in zip(named.to_numpy(), et):
+        minute = t.hour * 60 + t.minute
+        if 17 * 60 <= minute < 18 * 60:
+            assert s == S.MAINTENANCE, f"{t.time()} should be the halt, got {s}"
+        else:
+            assert s != S.CLOSED, f"{t.time()} classified CLOSED but the market is open"

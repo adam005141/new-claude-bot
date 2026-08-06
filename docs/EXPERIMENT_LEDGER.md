@@ -85,6 +85,62 @@ sample was not hiding a fragile edge, it was hiding a negative one.
 
 ---
 
+## Registered BEFORE execution: run 15 (session decomposition)
+
+Measurement only. No entry rule, no sizing, no P&L, development split only. Trial count
+stays at 3.
+
+**The rule changed, and it invalidates the SCOPE of every prior result.** On 2026-08-06
+the firm rule was clarified: positions may be held overnight, and must be flat only for
+the CME daily halt at 17:00-18:00 ET (14:00-15:00 Pacific). Everything in runs 1-14 was
+produced with RTH-only bars, so roughly fifteen and a half hours of every session had
+never been screened, backtested, or looked at.
+
+Two engine corrections follow from it, both recorded because they change what past runs
+measured:
+
+- `DEFAULT_ENABLED` now covers every session the contract trades. `RTH_ONLY` is kept so
+  runs 1-14 stay reproducible.
+- 16:00-17:00 ET classified as `CLOSED` and now classifies as `POST_CLOSE`. The cash
+  market shuts at 16:00 but the future trades to 17:00, so a full tradable hour was being
+  silently discarded. A test now sweeps the clock and asserts the only unclassified
+  minutes are the halt itself.
+- `flat_time_et` moves from 15:50 to 16:50, ten minutes before the halt rather than ten
+  minutes before the cash close.
+
+**The engine invariant survives.** The 17:00 flat requirement lands exactly on the 18:00
+session roll, so a position still never crosses a session boundary. What changes is the
+leash inside one session: up to 23 hours instead of 6.
+
+**What run 15 measures.** Each session split into windows a compliant trade could hold:
+GLOBEX_TO_OPEN (18:00-09:30), RTH (09:30-16:00), POST_CLOSE (16:00-16:50), and
+FULL_SESSION (18:00-16:50). Each reported as a standalone buy-and-hold with one round trip
+charged.
+
+**Motivation, and it is a measured one.** Run 14 put intraday drift between -0.0061R and
++0.0006R across every geometry over 387 sessions in which the index rose roughly a third.
+Zero intraday drift and a large index gain cannot both hold unless the gain happened
+outside RTH.
+
+**Stated in advance, because it decides how to read a positive result.** An overnight long
+is **not alpha**. It is the equity risk premium plus the documented overnight/intraday
+effect, harvested with a timing rule. Two consequences: it should persist out of sample in
+a way none of Legs A to C would have, and it should hurt precisely when risk arrives. The
+development split is a bull market, so a positive overnight number is exactly what this
+sample produces and is a reason to test out of sample, not a reason to believe it.
+
+**The binding constraint is gap risk, not expectancy.** An overnight position cannot be
+stopped during the halt or through a gap, so the account is exposed to the entire move
+rather than to a stop distance. The run reports the worst and 1st-percentile overnight
+moves against the $2,000 MLL. If one night in the sample would have ended the account at
+one contract, expectancy is irrelevant.
+
+**Prediction:** GLOBEX_TO_OPEN carries a positive mean and RTH is flat or negative, with
+the overnight t-statistic between 1 and 3, and at least one session in the sample whose
+overnight move exceeds 25% of the MLL buffer at one contract.
+
+---
+
 ## Registered BEFORE execution: run 14 (barrier touch screen)
 
 Registered before the tool was written. Measurement only: no entry rule, no sizing, no

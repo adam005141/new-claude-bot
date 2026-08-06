@@ -264,7 +264,10 @@ class RiskParams:
     corr_lookback_sessions: int = 20
     mu_min: float = 0.25                  # required net-expectancy margin
     max_contracts_per_instrument: int = 4
-    flat_time_et: time = time(15, 50)
+    # Flat before the CME daily halt at 17:00 ET (14:00 Pacific), NOT at the cash close.
+    # 16:50 leaves ten minutes to exit into a book that is still liquid rather than
+    # market-ordering into the last print before a halt.
+    flat_time_et: time = time(16, 50)
 
 
 @dataclass(frozen=True)

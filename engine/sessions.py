@@ -40,6 +40,7 @@ class Session(str, Enum):
     RTH_MIDDAY = "RTH_MIDDAY"
     RTH_AFTERNOON = "RTH_AFTERNOON"
     RTH_CLOSE = "RTH_CLOSE"
+    POST_CLOSE = "POST_CLOSE"
     MAINTENANCE = "MAINTENANCE"
     CLOSED = "CLOSED"
 
@@ -50,6 +51,10 @@ DEFAULT_WINDOWS: list[tuple[Session, time, time]] = [
     (Session.RTH_MIDDAY,    time(10, 30), time(14, 0)),
     (Session.RTH_AFTERNOON, time(14, 0),  time(15, 50)),
     (Session.RTH_CLOSE,     time(15, 50), time(16, 0)),
+    # The cash market closes at 16:00 but the future keeps trading until 17:00 ET
+    # (16:00 CT). That hour was previously classified CLOSED, which silently removed a
+    # tradable hour from every screen. It only mattered once overnight holds were allowed.
+    (Session.POST_CLOSE,    time(16, 0),  time(17, 0)),
     (Session.MAINTENANCE,   time(17, 0),  time(18, 0)),
     (Session.NY_PREMARKET,  time(8, 0),   time(9, 30)),
     (Session.EU_NY_OVERLAP, time(7, 0),   time(8, 0)),
@@ -57,7 +62,25 @@ DEFAULT_WINDOWS: list[tuple[Session, time, time]] = [
     (Session.ASIA,          time(18, 0),  time(23, 59, 59)),
 ]
 
+# Every session the contract actually trades. The only excluded windows are MAINTENANCE
+# (17:00-18:00 ET, the CME daily halt) and CLOSED.
+#
+# This was RTH-only until 2026-08-06, when the firm rule was clarified: positions may be
+# held overnight and must be flat only for the daily break. Every result recorded before
+# that date was produced under the RTH-only setting and measured RTH bars alone, which is
+# why roughly fifteen hours of each session had never been screened.
+#
+# The 17:00 flat requirement lands exactly on the 18:00 session roll, so the engine's
+# invariant that a position never crosses a session boundary still holds unchanged. What
+# changes is the length of the leash inside one session: up to 23 hours instead of 6.
 DEFAULT_ENABLED: frozenset[Session] = frozenset({
+    Session.ASIA, Session.LONDON, Session.EU_NY_OVERLAP, Session.NY_PREMARKET,
+    Session.RTH_OPEN, Session.RTH_MIDDAY, Session.RTH_AFTERNOON, Session.RTH_CLOSE,
+    Session.POST_CLOSE,
+})
+
+# RTH only. Kept so the pre-2026-08-06 results stay reproducible.
+RTH_ONLY: frozenset[Session] = frozenset({
     Session.RTH_OPEN, Session.RTH_MIDDAY, Session.RTH_AFTERNOON,
 })
 
