@@ -66,6 +66,30 @@ def cost_in_r(round_trip_points: float, stop_points: float) -> float:
     return round_trip_points / stop_points
 
 
+def redenominate_slippage(costs: CostModel, inst: Instrument,
+                          usd_per_side: float) -> CostModel:
+    """
+    Rebuild a cost model with slippage charged in DOLLARS rather than ticks.
+
+    This exists because the choice of denomination is not neutral and was never measured.
+    The spread in these models is measured; the slippage allowance is a prior, and it is
+    expressed in ticks. A tick is worth $1.25 on MES and $0.50 on MNQ, so an identical
+    "0.5 ticks" allowance charges MES two and a half times more in dollars for no reason
+    grounded in observation.
+
+    That assumption is load-bearing: it decides which instrument looks cheaper per
+    contract. Any conclusion that survives only one denomination is an artefact of the
+    denomination, and this function is how that gets caught rather than published.
+    """
+    return CostModel(
+        name=f"{costs.name}[slip=${usd_per_side:.3f}/side]",
+        commission_per_side=costs.commission_per_side,
+        spread_ticks_per_side=costs.spread_ticks_per_side,
+        slippage_ticks_per_side=usd_per_side / inst.tick_value,
+        measured=costs.measured,
+    )
+
+
 def measure_atr(data_dir: str, symbol: str, bar_minutes: int, atr_window: int,
                 split_hi: float) -> pd.Series:
     """
@@ -127,6 +151,10 @@ def main(argv=None) -> int:
     ap.add_argument("--decision-minutes", type=int, default=5)
     ap.add_argument("--atr-window", type=int, default=14)
     ap.add_argument("--dev-fraction", type=float, default=0.50)
+    ap.add_argument("--slippage-usd", type=float, default=0.625,
+                    help="Sensitivity: re-charge slippage at this many USD per side on "
+                         "every instrument, instead of the tick-denominated prior. "
+                         "Default 0.625 is what 0.5 ticks currently costs on MES.")
     args = ap.parse_args(argv)
 
     risk, prop = RiskParams(), PropRules()
@@ -196,6 +224,7 @@ def main(argv=None) -> int:
                   f"{best['atr_mult']:.1f}xATR ({best['stop_points']:.1f} pts, "
                   f"{best['contracts']} contract{'s' if best['contracts'] > 1 else ''})")
             print(f"  vs current 1.5xATR    {[r for r in rows if r['atr_mult'] == 1.5][0]['cost_in_R']:.3f}R")
+            alt = redenominate_slippage(costs, inst, args.slippage_usd)
             summary[symbol] = {
                 "round_trip_usd": rt_usd,
                 "round_trip_points": rt_points,
@@ -203,6 +232,9 @@ def main(argv=None) -> int:
                 "hurdle_at_1_5_atr": [r for r in rows if r["atr_mult"] == 1.5][0]["cost_in_R"],
                 "best_tradable_hurdle": best["cost_in_R"],
                 "best_atr_multiple": best["atr_mult"],
+                "alt_round_trip_usd": alt.round_trip_usd(inst),
+                "alt_hurdle_at_1_5_atr": cost_in_r(alt.round_trip_points(inst),
+                                                   1.5 * med_atr),
                 "rows": rows,
             }
         print()
@@ -227,6 +259,33 @@ def main(argv=None) -> int:
             print(f"  {cheap_usd} is cheaper in DOLLARS, but {cheap_r} is cheaper in R. "
                   f"R is what matters:\n  it is the ratio the strategy actually has to "
                   f"overcome.")
+
+        # ---- sensitivity: is that verdict an artefact of an unmeasured assumption? ----
+        print()
+        print(f"  SENSITIVITY. The spread above is measured; the slippage allowance is a")
+        print(f"  PRIOR denominated in TICKS, which charges each instrument a different")
+        print(f"  number of dollars for the same nominal allowance. Re-charging slippage")
+        print(f"  at a flat ${args.slippage_usd:.3f}/side on every instrument instead:")
+        print()
+        print(f"  {'symbol':>8} {'$/RT':>8} {'$/RT alt':>10} {'hurdle@1.5x':>12} {'alt':>8}")
+        for sym, s in summary.items():
+            print(f"  {sym:>8} {s['round_trip_usd']:>8.2f} {s['alt_round_trip_usd']:>10.2f} "
+                  f"{s['hurdle_at_1_5_atr']:>12.3f} {s['alt_hurdle_at_1_5_atr']:>8.3f}")
+        print()
+        alt_cheap_usd = min(summary, key=lambda s: summary[s]["alt_round_trip_usd"])
+        alt_cheap_r = min(summary, key=lambda s: summary[s]["alt_hurdle_at_1_5_atr"])
+        if alt_cheap_usd != cheap_usd:
+            print(f"  ** THE DOLLAR RANKING FLIPS: {cheap_usd} under tick-denominated "
+                  f"slippage,\n     {alt_cheap_usd} under dollar-denominated. That "
+                  f"comparison is an ARTEFACT of an\n     assumption, not a measurement. "
+                  f"Do not choose an instrument on it. **")
+        else:
+            print(f"  Dollar ranking is unchanged ({alt_cheap_usd} cheaper either way).")
+        if alt_cheap_r != cheap_r:
+            print(f"  ** THE R RANKING ALSO FLIPS. No instrument conclusion is safe. **")
+        else:
+            print(f"  R ranking SURVIVES: {cheap_r} is cheaper under both denominations,")
+            print(f"  so its advantage comes from the contract spec rather than the prior.")
 
     print()
     print("LIMITS OF THIS ANALYSIS, stated so the table is not over-read:")

@@ -170,8 +170,17 @@ floor. **Third prediction falsified by measurement in this project.**
 | 2026-08-02 | BID/ASK downloaded (348,857 MES and 348,741 MNQ quote-bars). Cost scenarios replaced with measured percentiles. MES adverse matched the prior exactly; MNQ was understated by 57-122%. |
 
 Two predictions falsified by the measurement, recorded so the error rate is visible:
-the opening hour is NOT wider than midday (1.00x for both instruments), and MNQ is NOT
-the cheaper instrument in dollars per contract.
+the opening hour is NOT wider than midday (1.00x for both instruments), and MNQ's quoted
+spread is wider in TICKS than MES's (3 against 1 at p75).
+
+**Correction, 2026-08-06.** The second bullet originally read "MNQ is NOT the cheaper
+instrument in dollars per contract." That conflated ticks with dollars and was wrong as
+stated. An MNQ tick is $0.50 against MES's $1.25, so MNQ's 3-tick spread is $1.50/side
+against MES's $1.25/side: wider in ticks, and only 20% dearer in dollars rather than
+triple. Which instrument is cheaper per round trip then depends entirely on the ASSUMED
+slippage allowance, and the ranking flips with its denomination. See
+`RESULTS_DEV_2026-08-06_COST.md`. The instrument comparison in dollars is not a usable
+finding; the comparison in R is.
 
 ## Notes
 

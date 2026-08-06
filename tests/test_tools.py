@@ -712,3 +712,46 @@ def test_cheapest_instrument_in_dollars_need_not_be_cheapest_in_R():
     mnq = cost_in_r(COST_ADVERSE.round_trip_points(MNQ), 1.5 * 20.4)
     assert COST_ADVERSE.round_trip_usd(MNQ) < COST_ADVERSE.round_trip_usd(MES)
     assert mnq < mes, "MNQ should be cheaper in R at comparable ATR multiples"
+
+
+def test_redenominating_slippage_charges_equal_dollars_across_instruments():
+    """
+    The 0.5-tick slippage prior charges MES $0.625/side and MNQ $0.250/side for the same
+    nominal allowance, purely because a tick is worth different amounts. This helper is
+    how that assumption gets tested rather than inherited.
+    """
+    from engine.config import MES, MNQ, COST_ADVERSE
+    from tools.cost_hurdle import redenominate_slippage
+
+    for inst in (MES, MNQ):
+        alt = redenominate_slippage(COST_ADVERSE, inst, 0.625)
+        assert alt.slippage_ticks_per_side * inst.tick_value == pytest.approx(0.625)
+        # Spread and commission must pass through untouched; only slippage is restated.
+        assert alt.spread_ticks_per_side == COST_ADVERSE.spread_ticks_per_side
+        assert alt.commission_per_side == COST_ADVERSE.commission_per_side
+
+
+def test_the_dollar_instrument_ranking_is_an_artefact_but_the_R_ranking_is_not():
+    """
+    Pinned because it changed a conclusion. With measured spreads (MES 1 tick, MNQ 3
+    ticks) MNQ looks cheaper per round trip under the tick-denominated slippage prior and
+    MORE expensive under a dollar-denominated one. The R ranking does not flip, so the
+    R conclusion is safe and the dollar one is not.
+    """
+    from engine.config import MES, MNQ, CostModel
+    from tools.cost_hurdle import cost_in_r, redenominate_slippage
+
+    mes_c = CostModel("m", 0.60, 1.0, 0.5)      # measured MES p75 spread
+    mnq_c = CostModel("m", 0.60, 3.0, 0.5)      # measured MNQ p75 spread
+    med_atr = {"MES": 3.28, "MNQ": 16.42}       # measured dev medians, 5-min bars
+
+    ticks = {i.symbol: c.round_trip_usd(i) for i, c in ((MES, mes_c), (MNQ, mnq_c))}
+    usd = {i.symbol: redenominate_slippage(c, i, 0.625).round_trip_usd(i)
+           for i, c in ((MES, mes_c), (MNQ, mnq_c))}
+    assert ticks["MNQ"] < ticks["MES"], "tick-denominated: MNQ looks cheaper"
+    assert usd["MNQ"] > usd["MES"], "dollar-denominated: MNQ looks dearer. Ranking flips."
+
+    for costs in (lambda i, c: c, lambda i, c: redenominate_slippage(c, i, 0.625)):
+        r = {i.symbol: cost_in_r(costs(i, c).round_trip_points(i), 1.5 * med_atr[i.symbol])
+             for i, c in ((MES, mes_c), (MNQ, mnq_c))}
+        assert r["MNQ"] < r["MES"], "the R ranking must NOT flip"
