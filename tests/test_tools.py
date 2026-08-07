@@ -1468,3 +1468,29 @@ def test_a_bigger_buffer_survives_a_drawdown_that_kills_a_smaller_one():
     big = simulate(r, account_rules("150k"), 8, 30, np.random.default_rng(0))
     assert small["breach"] == 1.0, "a $2,000 buffer must not survive a $2,000 drawdown"
     assert big["breach"] == 0.0, "a $4,500 buffer must"
+
+
+def test_gzipped_exports_are_read_like_plain_csv(tmp_path):
+    """
+    Raw Barchart exports are archived gzipped, at roughly a quarter of their size.
+
+    Each export costs one download from a capped daily quota, so losing them to an
+    ephemeral container means spending that quota again. They are kept in the repo
+    compressed, which means the importer has to find and read them.
+    """
+    import gzip
+    import shutil
+
+    from tools.import_barchart import cmd_import, read_csv
+
+    src = tmp_path / "src"
+    src.mkdir()
+    plain = _barchart_csv(src, "America/Chicago", "MESH24.csv")
+    gz = src / "MESM24.csv.gz"
+    with open(_barchart_csv(tmp_path, "America/Chicago", "MESM24.csv"), "rb") as fi, \
+            gzip.open(gz, "wb") as fo:
+        shutil.copyfileobj(fi, fo)
+
+    assert len(read_csv(gz)) == len(read_csv(plain)), "gzip must be transparent"
+    assert cmd_import(src, tmp_path / "out", None, None, "1min") == 0
+    assert (tmp_path / "out" / "MES" / "MES_202406_1min_TRADES.parquet").exists()

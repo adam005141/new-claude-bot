@@ -413,7 +413,9 @@ def cmd_check(paths: list[Path]) -> int:
 
 def cmd_import(src: Path, out: Path, symbol_override: str | None,
                assume_tz: str | None, bar_size: str) -> int:
-    files = sorted(p for p in src.rglob("*.csv"))
+    # .csv.gz too: raw exports are archived compressed in data_raw/, because each one
+    # costs a download from a capped daily quota and re-fetching is not free.
+    files = sorted(set(src.rglob("*.csv")) | set(src.rglob("*.csv.gz")))
     if not files:
         log.error("no CSV files under %s", src)
         return 1
