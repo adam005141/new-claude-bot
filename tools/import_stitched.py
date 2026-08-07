@@ -34,14 +34,30 @@ invisible. That means:
   * There is no BID/ASK, so costs for these instruments are ASSUMED, not measured. Every
     earlier result in this project used measured spreads; these will not.
 
-CONTRACT SPECIFICATIONS ARE UNVERIFIED
---------------------------------------
-The point values below are from general knowledge and have NOT been checked against CME
-contract specifications, which is the standard this project has applied to MES and MNQ
-throughout. The source project flags the same gap ("micro specs should be broker-confirmed
-before live"). Treat every dollar figure derived from them as provisional. The RATIO
-results, path expectancy and Sharpe, are far less sensitive to a point-value error than
-the dollar ones, because it scales edge and noise together.
+CONTRACT SPECIFICATIONS: VERIFIED 2026-08-07
+--------------------------------------------
+Checked against CME product pages and broker specification sheets. One was wrong.
+
+    MGC  10 troy oz,     tick 0.10   = $1.00    -> $10/pt      confirmed
+    MCL  100 barrels,    tick 0.01   = $1.00    -> $100/pt     confirmed
+    SIL  1,000 troy oz,  tick 0.005  = $5.00    -> $1,000/pt   confirmed
+    MHG  2,500 lb,       tick 0.0005 = $1.25    -> $2,500/pt   confirmed
+    MNG  1,000 MMBtu,    tick 0.001  = $1.00    -> $1,000/pt   **CORRECTED**
+
+MNG was carried at 2,500 MMBtu and $2,500/pt, which is 2.5x too high. The micro is 1/10th
+of the 10,000 MMBtu NG contract, so it is 1,000 MMBtu. The error came from assuming it
+mirrored MHG's 2,500-unit size.
+
+The dollar P&L turns out to be largely insensitive to this, because position size is
+derived from a dollar risk budget: `qty = budget // (stop_distance * point_value)`, so
+halving the point value roughly doubles the quantity and the dollar risk is unchanged. What
+it DOES change is the integer rounding and which days the max-risk guard rejects, so the
+result is re-run rather than adjusted arithmetically.
+
+Note the SI, HG and NG files carry FULL-SIZE price series. They are priced here with MICRO
+specifications, which is correct: the price series are identical, and the micro is the
+contract actually tradeable in a small account. That substitution is inherited from the
+source project.
 """
 
 from __future__ import annotations
@@ -57,13 +73,14 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from engine.sessions import session_dates  # noqa: E402
 
 # symbol -> (point value USD, tick size, tick value USD)
-# UNVERIFIED. See the module docstring.
+# VERIFIED against CME 2026-08-07. See the module docstring for sources and the one
+# correction (MNG).
 SPECS: dict[str, tuple[float, float, float]] = {
     "MGC": (10.0, 0.10, 1.00),        # micro gold, 10 oz
     "MCL": (100.0, 0.01, 1.00),       # micro crude, 100 bbl
-    "SI":  (1000.0, 0.005, 5.00),     # priced as MICRO silver (SIL), 1000 oz
-    "HG":  (2500.0, 0.0005, 1.25),    # priced as MICRO copper (MHG), 2500 lb
-    "NG":  (2500.0, 0.001, 2.50),     # priced as MICRO nat gas (MNG), 2500 MMBtu
+    "SI":  (1000.0, 0.005, 5.00),     # priced as MICRO silver (SIL), 1,000 oz
+    "HG":  (2500.0, 0.0005, 1.25),    # priced as MICRO copper (MHG), 2,500 lb
+    "NG":  (1000.0, 0.001, 1.00),     # priced as MICRO nat gas (MNG), 1,000 MMBtu
     "MES": (5.0, 0.25, 1.25),
     "MNQ": (2.0, 0.25, 0.50),
     "M2K": (5.0, 0.10, 0.50),
@@ -106,7 +123,8 @@ def main(argv=None) -> int:
     print("=" * 74)
     print("Roll guard is OFF for this data: the files are already stitched, so expiry and")
     print("roll sessions cannot be reconstructed. Costs will be ASSUMED, not measured.")
-    print("Contract specifications are UNVERIFIED against CME.")
+    print("Contract specifications verified against CME 2026-08-07; MNG was wrong by 2.5x")
+    print("and is corrected here.")
     print()
 
     n = 0

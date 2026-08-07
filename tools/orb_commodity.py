@@ -31,9 +31,12 @@ of spread plus half a tick of slippage per side. The stricter one is the default
 WHAT CANNOT BE FIXED
 --------------------
 The bars are pre-stitched, so the roll and near-expiry guards are off. There is no BID/ASK
-for these instruments, so costs are ASSUMED. The micro contract specifications are
-UNVERIFIED against CME. None of that is this tool's fault and none of it is repairable
-from the data on hand; it bounds what any result here can mean.
+for these instruments, so costs are ASSUMED. Neither is repairable from the data on hand,
+and both bound what any result here can mean.
+
+The contract specifications WERE verifiable and now are: checked against CME on 2026-08-07,
+one error found and corrected (MNG was carried at 2.5x its real point value). See
+`tools/import_stitched.py`.
 """
 
 from __future__ import annotations
@@ -200,7 +203,7 @@ def main(argv=None) -> int:
           f"guard {'OFF' if args.no_guard else 'ON (2x)'}")
     print(f"stops fill at {'the stop price (THEIR convention)' if args.their_stops else 'the WORSE of stop and open (this project)'}"
           f" | slippage {cfg.slip_ticks_per_side} ticks/side")
-    print("Costs ASSUMED, specs UNVERIFIED, roll guard OFF: pre-stitched data.")
+    print("Costs ASSUMED and roll guard OFF: pre-stitched data. Specs verified 2026-08-07.")
     print()
 
     per_symbol, all_trades = {}, []
@@ -319,7 +322,8 @@ def main(argv=None) -> int:
     print("     strategy contributes over a same-volatility, same-tail coin flip.")
     print("  3. The sample is ~2 years and one regime. It cannot be crash-tested, and it")
     print("     spans a metals bull that the source project itself flags.")
-    print("  4. Costs ASSUMED, contract specs UNVERIFIED, roll guard OFF.")
+    print("  4. Costs ASSUMED and roll guard OFF. Contract specs verified against CME")
+    print("     2026-08-07; MNG was wrong by 2.5x and is corrected.")
 
     if args.report:
         args.report.parent.mkdir(parents=True, exist_ok=True)
