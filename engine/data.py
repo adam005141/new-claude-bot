@@ -94,7 +94,8 @@ def load_contract(cf: ContractFile) -> pd.DataFrame:
     return df
 
 
-def choose_active_contract(per_contract: dict[str, pd.DataFrame]) -> pd.DataFrame:
+def choose_active_contract(per_contract: dict[str, pd.DataFrame],
+                           min_session_volume_fraction: float = 0.01) -> pd.DataFrame:
     """
     Volume-crossover roll, decided one session in arrears.
 
@@ -102,6 +103,29 @@ def choose_active_contract(per_contract: dict[str, pd.DataFrame]) -> pd.DataFram
 
     The lag is the whole point. Volume for session D is only known once D has closed, so
     the choice made from D's volume can only take effect from D+1. Anything else peeks.
+
+    DORMANT SESSIONS DO NOT GET A VOTE
+    ----------------------------------
+    Only sessions carrying at least `min_session_volume_fraction` of the busiest session's
+    volume take part in the decision. Without that filter the roll is destroyed by data
+    that starts at a contract's listing date rather than near its front-month window.
+
+    Concretely, from real 2011-2013 gold: every expiry is listed years early and dribbles
+    single-lot prints long before anyone trades it, and a far-dated December routinely
+    out-trades the intervening months while all of them are dormant. The `cummax` below
+    then latches onto that December on a 2-lot session in 2011 and can never roll back, so
+    the whole of 2013 is served by the December contract while February, April, June and
+    August were each front in turn. The raw per-session winners were correct; the
+    monotonicity guard was applied to noise.
+
+    The threshold is not sensitive: dormant sessions run three to four orders of magnitude
+    below front-month ones, so anything from 0.1% to 10% gives the same roll. It exists to
+    separate "trading" from "not trading", not to be tuned.
+
+    Sessions below the floor still receive an active contract, inherited from the nearest
+    decided session, and are flagged `thin_session` by `build_continuous` so the caller can
+    exclude them. They are not dropped here: that would silently change the span of every
+    series built from data whose leading edge is thin.
     """
     frames = []
     for contract, df in per_contract.items():
@@ -118,14 +142,22 @@ def choose_active_contract(per_contract: dict[str, pd.DataFrame]) -> pd.DataFram
     daily = (pd.concat(frames, ignore_index=True)
              .groupby(["session_date", "contract_month"], as_index=False)["volume"].sum())
 
+    session_total = daily.groupby("session_date")["volume"].sum()
+    all_sessions = session_total.index.sort_values()
+    floor = float(min_session_volume_fraction) * float(session_total.max())
+    voting = session_total.index[session_total >= floor]
+
     # Winner by volume WITHIN each session, then shifted forward one session so the
     # decision only ever uses already-closed information.
-    winner = (daily.sort_values(["session_date", "volume"])
+    winner = (daily[daily["session_date"].isin(voting)]
+              .sort_values(["session_date", "volume"])
               .groupby("session_date", as_index=False)
               .last()[["session_date", "contract_month"]]
               .rename(columns={"contract_month": "winner"})
               .sort_values("session_date")
               .reset_index(drop=True))
+    if winner.empty:
+        return pd.DataFrame(columns=["session_date", "contract_month"])
 
     winner["active"] = winner["winner"].shift(1)
     # The first session has no prior close to learn from, so it keeps its own winner.
@@ -134,12 +166,18 @@ def choose_active_contract(per_contract: dict[str, pd.DataFrame]) -> pd.DataFram
     winner["active"] = winner["active"].ffill()
     winner["active"] = winner["active"].cummax()
 
-    return winner[["session_date", "active"]].rename(columns={"active": "contract_month"})
+    # Dormant sessions inherit the nearest decision: forward from the last decided one,
+    # and backward for any that precede the first.
+    active = (winner.set_index("session_date")["active"]
+              .reindex(all_sessions).ffill().bfill())
+    return (active.rename("contract_month").reset_index()
+            .rename(columns={"index": "session_date"})[["session_date", "contract_month"]])
 
 
 def build_continuous(data_dir: str | Path, symbol: str,
                      bar_size: str = "1min", what: str = "TRADES",
-                     stop_entries_days_before_expiry: int = 5) -> pd.DataFrame:
+                     stop_entries_days_before_expiry: int = 5,
+                     min_session_volume_fraction: float = 0.01) -> pd.DataFrame:
     """
     Build the continuous active-contract series for one symbol.
 
@@ -152,6 +190,7 @@ def build_continuous(data_dir: str | Path, symbol: str,
       session_date          the CME session each bar belongs to
       contract_month        the contract actually traded
       is_roll_session       True when the active contract differs from the prior session
+      thin_session          True when the active contract barely traded that session
       entries_blocked       True within N sessions of expiry, or during a roll session
     """
     files = discover(data_dir, symbol, bar_size, what)
@@ -164,7 +203,7 @@ def build_continuous(data_dir: str | Path, symbol: str,
     per_contract = {cf.contract_month: load_contract(cf) for cf in files}
     expiry = {cf.contract_month: cf.expiry for cf in files}
 
-    active = choose_active_contract(per_contract)
+    active = choose_active_contract(per_contract, min_session_volume_fraction)
     if active.empty:
         raise ValueError(f"{symbol}: no volume anywhere, cannot determine active contract")
     active_by_date = dict(zip(active["session_date"], active["contract_month"]))
@@ -192,6 +231,15 @@ def build_continuous(data_dir: str | Path, symbol: str,
         session_first["contract_month"].shift(1)).fillna(False)
     roll_map = dict(zip(session_first["session_date"], session_first["is_roll"]))
     cont["is_roll_session"] = cont["session_date"].map(roll_map).fillna(False)
+
+    # A session where the active contract barely traded is not a session anyone could
+    # have traded. Flagged rather than dropped: dropping would silently shorten every
+    # series whose leading edge is thin. `tools/oos_test.py` had to gate this by hand
+    # after MGC's December expiry printed tens of lots a bar for three weeks while August
+    # carried the market, and the opening ranges from those sessions were untradeable.
+    sess_vol = cont.groupby("session_date")["volume"].sum()
+    thin = sess_vol < min_session_volume_fraction * float(sess_vol.max())
+    cont["thin_session"] = cont["session_date"].map(thin).fillna(False)
 
     days_to_expiry = cont.apply(
         lambda r: (expiry[r["contract_month"]] - r["session_date"]).days, axis=1)

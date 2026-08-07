@@ -1390,3 +1390,72 @@ def test_symbols_containing_digits_are_discoverable():
             assert len(discover(root, sym)) == 1, f"{sym} not discovered"
         # The six-digit contract must not be absorbed into a greedy symbol group.
         assert discover(root, "M2K")[0].contract_month == "202603"
+
+
+def _dormant_then_front(contract: str, sessions, lots) -> pd.DataFrame:
+    """Bars for one expiry: a handful per session at the given daily volume."""
+    rows = []
+    for day, v in zip(sessions, lots):
+        ts = pd.date_range(f"{day} 14:30", periods=4, freq="30min", tz="UTC")
+        rows.append(pd.DataFrame({
+            "timestamp_utc": ts, "open": 100.0, "high": 100.5, "low": 99.5,
+            "close": 100.0, "volume": v / 4.0,
+            "symbol": "GC", "contract_month": contract}))
+    return pd.concat(rows, ignore_index=True)
+
+
+def test_dormant_sessions_cannot_latch_the_roll():
+    """
+    Regression: a far-dated contract winning a 2-lot session must not freeze the roll.
+
+    Every expiry is listed years before it trades, so real Barchart files carry a long
+    dormant head where a distant December out-trades the intervening months while all of
+    them are asleep. `cummax` latched onto that December on a 2-lot session in 2011 and
+    could never roll back, so the whole of 2013 was served by the December contract while
+    February, April, June and August were each front in turn. The per-session winners
+    were correct the entire time; the monotonicity guard was being applied to noise.
+    """
+    from engine.data import choose_active_contract
+
+    days = pd.bdate_range("2024-01-01", periods=40).strftime("%Y-%m-%d").tolist()
+    dormant, live = days[:10], days[10:]
+
+    # During the dormant head the LATEST contract wins every session, on 3 lots.
+    per = {
+        "202403": _dormant_then_front("202403", days, [1] * 10 + [9000] * 10 + [5] * 20),
+        "202406": _dormant_then_front("202406", days, [2] * 10 + [5] * 10 + [9000] * 10 + [5] * 10),
+        "202409": _dormant_then_front("202409", days, [3] * 10 + [5] * 20 + [9000] * 10),
+    }
+
+    active = choose_active_contract(per).set_index("session_date")["contract_month"]
+    active.index = active.index.astype(str)   # session_date is a date, keys are strings
+
+    # One session of lag before each crossover takes effect, so sample the middle of
+    # each front-month run rather than its first day.
+    assert active[live[4]] == "202403"
+    assert active[live[14]] == "202406"
+    assert active[live[24]] == "202409"
+
+    # And the dormant head must not have pinned it to the far-dated contract.
+    assert set(active[live].unique()) == {"202403", "202406", "202409"}
+
+
+def test_thin_sessions_are_flagged_not_dropped():
+    """Dormant sessions stay in the series, marked, so nothing silently changes span."""
+    import tempfile
+    from pathlib import Path
+
+    from engine.data import build_continuous
+
+    days = pd.bdate_range("2024-01-01", periods=30).strftime("%Y-%m-%d").tolist()
+    with tempfile.TemporaryDirectory() as td:
+        out = Path(td)
+        for cm, lots in (("202403", [1] * 10 + [9000] * 20),
+                         ("202406", [2] * 10 + [5] * 20)):
+            _dormant_then_front(cm, days, lots).to_parquet(
+                out / f"GC_{cm}_30min_TRADES.parquet", index=False)
+        c = build_continuous(out, "GC", bar_size="30min")
+
+    sess = c.drop_duplicates("session_date")
+    assert sess["thin_session"].sum() == 10, "the dormant head should be flagged"
+    assert len(sess) == 30, "and still present: flagged, not dropped"
