@@ -1357,3 +1357,79 @@ def test_edge_budget_cli_runs_end_to_end(tiny_data, capsys):
     assert "PER-SESSION SHARPE" in out
     assert "SHARPE REQUIRED" in out
     assert "WHAT EACH LEVER IS WORTH" in out
+
+
+# ---------------------------------------------------------------------------
+# Limit entry: saving versus adverse selection
+# ---------------------------------------------------------------------------
+
+def _quote_sessions(n_sessions=120, seed=0, drift_when_filled=0.0):
+    """
+    BID/ASK/TRADES frames with a controllable relationship between "did a resting buy
+    fill" and "what the session then did", so the selection term can be tested against a
+    known answer.
+    """
+    import datetime as _dt
+    rng = np.random.default_rng(seed)
+    per = 60
+    rows = {"BID": [], "ASK": [], "TRADES": []}
+    for d in range(n_sessions):
+        sd = _dt.date(2026, 1, 5) + _dt.timedelta(days=d)
+        dips = rng.random() < 0.5                      # does price dip at the open
+        mid = 5800.0
+        low = mid - (1.0 if dips else 0.0)
+        # Sessions that dip get `drift_when_filled` added to their outcome.
+        end = mid + rng.normal(0, 5) + (drift_when_filled if dips else 0.0)
+        for what, off in (("BID", -0.25), ("ASK", 0.0), ("TRADES", -0.125)):
+            arm = pd.DataFrame({
+                "mso": np.arange(-930, -930 + per, dtype=float),
+                "open": mid + off, "high": mid + off + 0.5,
+                "low": low + off, "close": mid + off, "session_date": sd})
+            ex = pd.DataFrame({
+                "mso": np.arange(0, 5, dtype=float),
+                "open": end + off, "high": end + off, "low": end + off,
+                "close": end + off, "session_date": sd})
+            rows[what].append(pd.concat([arm, ex], ignore_index=True))
+    return {k: pd.concat(v, ignore_index=True) for k, v in rows.items()}
+
+
+def test_limit_fill_requires_the_ask_to_trade_down_to_the_limit():
+    """
+    A buy limit fills when somebody sells to you at your price, so the condition is on the
+    ASK. Using the bid would assume a fill merely because the market quoted your level,
+    which no queue grants.
+    """
+    from engine.config import MES
+    from tools.limit_entry import measure
+    q = _quote_sessions(60, seed=1)
+    # The ask dips one point on half the sessions; a 1-tick offset should fill there.
+    m = measure(q["BID"], q["ASK"], q["TRADES"], MES, offset_ticks=1.0, wait_minutes=30)
+    assert 0.3 < m["filled"].mean() < 0.7, f"fill rate {m['filled'].mean():.0%}"
+    # A limit far below anything traded must never fill.
+    deep = measure(q["BID"], q["ASK"], q["TRADES"], MES, offset_ticks=40.0,
+                   wait_minutes=30)
+    assert not deep["filled"].any()
+
+
+def test_adverse_selection_is_detected_when_it_is_present():
+    """
+    The whole point. Construct a market where the sessions that fill a passive buy are
+    exactly the ones that go on to lose, and check the selection term finds it.
+    """
+    from engine.config import MES
+    from tools.limit_entry import measure
+    q = _quote_sessions(400, seed=2, drift_when_filled=-4.0)
+    m = measure(q["BID"], q["ASK"], q["TRADES"], MES, offset_ticks=1.0, wait_minutes=30)
+    sel = ((m.loc[m["filled"], "ret_from_market"].mean() - m["ret_from_market"].mean())
+           * MES.point_value)
+    assert sel < -5.0, f"a -4 point penalty on filled sessions should show up, got {sel:.2f}"
+
+
+def test_no_adverse_selection_is_reported_when_there_is_none():
+    from engine.config import MES
+    from tools.limit_entry import measure
+    q = _quote_sessions(400, seed=3, drift_when_filled=0.0)
+    m = measure(q["BID"], q["ASK"], q["TRADES"], MES, offset_ticks=1.0, wait_minutes=30)
+    sel = ((m.loc[m["filled"], "ret_from_market"].mean() - m["ret_from_market"].mean())
+           * MES.point_value)
+    assert abs(sel) < 4.0, f"no penalty was built in, but selection reads {sel:.2f}"

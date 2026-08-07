@@ -282,6 +282,60 @@ the annual Sharpe from 0.80 to 1.24; two ticks takes it to 1.40.
 **Prediction, registered before the run:** no single lever reaches the Sharpe needed for
 75% P(pass) inside six months, and the cost lever is the largest of the three.
 
+### Edge budget result: the requirement is six times the edge (2026-08-06)
+
+Measured, one MES contract, overnight window, $150 cap, 619 sessions:
+
+| | |
+|---|---:|
+| gross edge | $11.25/session |
+| round trip | $4.95, **44% of gross** |
+| net edge | $6.30/session |
+| session sd | $123.53 |
+| **per-session Sharpe** | **0.0510** (annual 0.81) |
+| target in sd | 24.3 |
+| buffer in sd | 16.2, **and it trails** |
+
+**Sharpe required** for a given P(pass), simulated with the real return distribution
+rescaled to each Sharpe so the fat tail and clustering survive:
+
+| P(pass) | 6mo | 12mo | 24mo |
+|---:|---:|---:|---:|
+| 60% | 0.200 | 0.100 | 0.075 |
+| 75% | 0.300 | 0.150 | 0.075 |
+
+**What each lever is worth:**
+
+| lever | Sharpe | annual | change | reaches |
+|---|---:|---:|---:|---|
+| measured now | 0.0510 | 0.81 | | nothing in the table |
+| limit entry, save 1 tick/side | 0.0712 | 1.13 | +40% | nothing |
+| limit entry, save 2 ticks/side | 0.0915 | 1.45 | +79% | **75% in 24 months** |
+| cut session sd by 20% | 0.0637 | 1.01 | +25% | nothing |
+
+**Registered prediction was 2 for 2:** no lever reaches 75% inside six months (that needs
+0.300, six times the measured value), and cost is the largest of the three.
+
+**The best realistic outcome in the whole table is 75% inside 24 months**, costing
+$50 + 24 x $50 + $150 = $1,400 in fees.
+
+**Registered addition: the 2-tick saving is an ASSUMPTION and must be measured.** A resting
+buy limit fills preferentially when price is falling, so the filled sessions are worse than
+the unfilled ones by construction. That is adverse selection, and for a passive order it is
+typically of the same order as the spread it saves. Assuming the saving without measuring
+the selection is exactly the error that produced a 100% pass rate in the feasibility sweep.
+
+`tools/limit_entry.py` measures both on MES BID/ASK bars and reports the net:
+
+```
+net = spread saved - (E[session return | filled] - E[session return])
+```
+
+**Prediction: the selection term cancels most of the saving, the net is under half a tick,
+and the cost lever in the edge budget is therefore largely fictional.** If that holds, no
+realistic lever reaches an acceptable pass rate and the constraint is the account, not the
+strategy.
+
 ### Cost-to-funded result, and a correction to my own reasoning
 
 | plan | PASS | luck only | LIFT | months to pass | E[fees] |
