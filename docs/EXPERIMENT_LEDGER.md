@@ -312,6 +312,57 @@ and loses on fees.** The fee schedules for the larger Combines have not been sup
 the cost column is comparable only within an account size and that has to be said on the
 page rather than assumed away.
 
+### Result: prediction 4 for 4, and the conclusion is the opposite of my reasoning
+
+| account | qty | B/sd | PASS | luck | LIFT | BREACH | months |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| 150k | 1 | 36.4 | **89%** | 11% | **+78%** | 6% | 60.6 |
+| 100k | 1 | 24.3 | 80% | 17% | +63% | 19% | 38.2 |
+| 150k | 2 | 18.2 | 69% | 19% | +50% | 30% | 25.1 |
+| **50k** | **1** | 16.2 | **67%** | 25% | +42% | 33% | **14.6** |
+| 100k | 2 | 12.1 | 55% | 19% | +36% | 45% | 12.9 |
+| 150k | 3 | 12.1 | 54% | 19% | +35% | 46% | 13.0 |
+
+Every registered claim held: largest lift on the 150k, materially longer, wins on P(pass),
+loses on fees.
+
+**P(pass) is almost entirely a function of buffer/sd.** Two rows at B/sd 12.1 give 55% and
+54%. Two at 8.1 give 49% and 43%. Two at 4.0 give 38% and 42%. Once B/sd is matched the
+account size barely matters, which makes B/sd the single governing parameter of the whole
+problem.
+
+**But the comparison that decides anything is at MATCHED TIME, because time is what is
+being paid for. And there the $50k wins.**
+
+| ~13-15 months | PASS | BREACH |
+|---|---:|---:|
+| **50k x1** | **67%** | **33%** |
+| 100k x2 | 55% | 45% |
+| 150k x3 | 54% | 46% |
+
+At matched P(pass) it wins too: 50k x1 reaches 67% in 14.6 months, 150k x2 reaches 69% in
+25.1.
+
+**My pre-run reasoning was wrong, and the algebra says why.** I argued that a bigger buffer
+helps because buffer scales linearly while drawdown scales as the square root of time. That
+is true at a FIXED contract count, which is not the comparison that matters. At a matched
+time-to-target `n`, the position size is `q = T/(mu*n)` and the drawdown works out to
+
+```
+buffer / drawdown  proportional to  (B/T) x (mu/sigma) x sqrt(n)
+```
+
+The account enters only through **B/T**, its buffer-to-target ratio: **0.667 on the $50k
+against 0.500 on both others.** The $50k is 33% better on the only account term that
+survives, and the larger Combines help solely by forcing a longer horizon, which is the
+thing being paid for.
+
+**Conclusion: the $50k Combine is the best of the three geometries for this strategy, and
+switching account size is closed as a lever.** The best configuration in the whole project
+remains what it already was: overnight window, one MES contract, $150 self-imposed session
+cap, no volatility gate. 67% pass against 33% breach over roughly 15 months, in-sample and
+optimistic.
+
 ### Edge budget result: the requirement is six times the edge (2026-08-06)
 
 Measured, one MES contract, overnight window, $150 cap, 619 sessions:
