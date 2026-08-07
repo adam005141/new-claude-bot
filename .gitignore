@@ -9,3 +9,4 @@ out/
 
 # Raw vendor CSVs; the parquet output under data/ is the artefact.
 downloads/*.csv
+data_oos/
