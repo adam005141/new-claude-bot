@@ -26,8 +26,12 @@ from .sessions import session_dates
 
 log = logging.getLogger(__name__)
 
+# Symbols may contain DIGITS: M2K, M6E, MYM. The original `[A-Z]+` silently skipped every
+# such file, so a whole instrument could be present on disk and invisible to the engine,
+# reported as "no files" rather than as an error. Anchored to start with a letter so the
+# six-digit contract group cannot be absorbed into the symbol.
 _FILENAME = re.compile(
-    r"^(?P<symbol>[A-Z]+)_(?P<contract>\d{6})_(?P<bar>\w+?)_(?P<what>[A-Z_]+)\.parquet$"
+    r"^(?P<symbol>[A-Z][A-Z0-9]*)_(?P<contract>\d{6})_(?P<bar>\w+?)_(?P<what>[A-Z_]+)\.parquet$"
 )
 
 REQUIRED_COLUMNS = {"timestamp_utc", "open", "high", "low", "close"}

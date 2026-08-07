@@ -1371,3 +1371,22 @@ def test_positions_are_still_flattened_at_the_session_flat_time():
     assert (exit_mso <= cfg.risk.flat_time_et.hour * 60
             + cfg.risk.flat_time_et.minute - (9 * 60 + 30)).all(), \
         "no position may survive its session's flat time"
+
+
+def test_symbols_containing_digits_are_discoverable():
+    """
+    Regression. The discovery pattern used `[A-Z]+` for the symbol, so M2K, M6E and MYM
+    were silently invisible: the file sat on disk and the engine reported "no files" rather
+    than raising. Found when a commodity import produced M2K and nothing could read it.
+    """
+    import tempfile
+    from engine.data import discover
+    with tempfile.TemporaryDirectory() as d:
+        root = Path(d)
+        for name in ("M2K_202603_1min_TRADES.parquet", "MES_202603_1min_TRADES.parquet",
+                     "M6E_202603_1min_TRADES.parquet"):
+            (root / name).write_bytes(b"")
+        for sym in ("M2K", "MES", "M6E"):
+            assert len(discover(root, sym)) == 1, f"{sym} not discovered"
+        # The six-digit contract must not be absorbed into a greedy symbol group.
+        assert discover(root, "M2K")[0].contract_month == "202603"
