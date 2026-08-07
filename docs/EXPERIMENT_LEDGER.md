@@ -336,6 +336,48 @@ and the cost lever in the edge budget is therefore largely fictional.** If that 
 realistic lever reaches an acceptable pass rate and the constraint is the account, not the
 strategy.
 
+### Result: the cost lever is not fictional, it is NEGATIVE
+
+| offset | wait | saving | adverse selection | net | vs the $6.30 net edge |
+|---:|---:|---:|---:|---:|---:|
+| 1 tick | 5 min | +1.25 | **-13.00** | **-11.75** | -1.9x |
+| 1 tick | 60 min | +1.25 | -6.95 | -5.70 | -0.9x |
+| 2 ticks | 5 min | +2.50 | **-18.99** | **-16.49** | -2.6x |
+| 2 ticks | 60 min | +2.50 | -8.99 | -6.49 | -1.0x |
+
+Adverse selection runs **five to eight times** the spread it saves. The best case nets
+-$6.49 a session against a total net edge of $6.30: passive entry does not fail to help, it
+removes the entire strategy and a little more.
+
+The mechanism is plain. At a 1-tick offset and a 5-minute wait, 82% of sessions fill at
+-$13.00 against the average, so the 18% that did NOT fill returned **+$59** against it. A
+session that never ticks down in its first minutes is a session going up, and resting a bid
+selects almost perfectly for the ones going down.
+
+**Prediction check: direction right, magnitude badly wrong.** I expected roughly zero and
+measured roughly minus one entire edge.
+
+**Recorded and NOT chased.** That +$59 on non-filling sessions is a large conditional
+effect and causal in form, since the first five minutes precede the rest. It is also 41
+sessions on the 11-month sample, found while measuring something else, and partly
+mechanical: a session ending far above average is unlikely to have ticked down early, so
+the conditioning and the outcome share a cause. Building a fifth leg from it would mean
+testing a post-hoc observation on data that is either spent or is the single-use lockbox.
+
+**THE LEVER TABLE IS NOW CLOSED.**
+
+| lever | verdict |
+|---|---|
+| Position size | Cannot change Sharpe. Arithmetic, not evidence. |
+| Cost | The only available reduction costs 5-8x what it saves. **Closed.** |
+| Variance | Worth +25%. Not close to enough. |
+| Instrument | **Untested.** Needs data we do not have. |
+
+The measured overnight edge is about 0.05 Sharpe a session. A $50,000 Combine asks for 24
+standard deviations of gain without ever surrendering 16 from a peak. No entry rule changes
+either number, and three of the four levers that could have closed the gap are now measured
+and closed. See `RESULTS_2026-08-06_EDGE_BUDGET.md`.
+
 ### Cost-to-funded result, and a correction to my own reasoning
 
 | plan | PASS | luck only | LIFT | months to pass | E[fees] |
