@@ -95,7 +95,8 @@ def load_contract(cf: ContractFile) -> pd.DataFrame:
 
 
 def choose_active_contract(per_contract: dict[str, pd.DataFrame],
-                           min_session_volume_fraction: float = 0.01) -> pd.DataFrame:
+                           min_session_volume_fraction: float = 0.01,
+                           confirm_sessions: int = 3) -> pd.DataFrame:
     """
     Volume-crossover roll, decided one session in arrears.
 
@@ -112,11 +113,11 @@ def choose_active_contract(per_contract: dict[str, pd.DataFrame],
 
     Concretely, from real 2011-2013 gold: every expiry is listed years early and dribbles
     single-lot prints long before anyone trades it, and a far-dated December routinely
-    out-trades the intervening months while all of them are dormant. The `cummax` below
-    then latches onto that December on a 2-lot session in 2011 and can never roll back, so
-    the whole of 2013 is served by the December contract while February, April, June and
-    August were each front in turn. The raw per-session winners were correct; the
-    monotonicity guard was applied to noise.
+    out-trades the intervening months while all of them are dormant. The anti-flip-flop
+    guard below then latches onto that December on a 2-lot session in 2011, so the whole of
+    2013 is served by the December contract while February, April, June and August were
+    each front in turn. The raw per-session winners were correct throughout; the guard was
+    being applied to noise.
 
     The threshold is not sensitive: dormant sessions run three to four orders of magnitude
     below front-month ones, so anything from 0.1% to 10% gives the same roll. It exists to
@@ -159,12 +160,40 @@ def choose_active_contract(per_contract: dict[str, pd.DataFrame],
     if winner.empty:
         return pd.DataFrame(columns=["session_date", "contract_month"])
 
-    winner["active"] = winner["winner"].shift(1)
-    # The first session has no prior close to learn from, so it keeps its own winner.
-    winner.loc[0, "active"] = winner.loc[0, "winner"]
-    # A roll must persist: once volume has crossed, never flip back on a single quiet day.
-    winner["active"] = winner["active"].ffill()
-    winner["active"] = winner["active"].cummax()
+    # Rolling FORWARD to a later expiry takes effect the next session: that is an ordinary
+    # volume crossover, and the one-session lag is the whole contract of this function.
+    # Falling BACK to an earlier expiry has to persist for `confirm_sessions` consecutive
+    # voting sessions first, because a single quiet day on which the old contract
+    # out-trades the new one is noise, not a roll.
+    #
+    # The asymmetry replaces a `cummax` over the winner series. That guard enforced the
+    # same "never flip back" intent, but by making the choice MONOTONIC FOREVER, so one
+    # anomalous session corrupted every session after it.
+    #
+    # Real example, from silver 2011. The December 2011 contract is missing from the
+    # download, so on 2011-09-26 the only contracts with any volume were dormant ones and
+    # the session total of 3,021 lots squeaked over the floor. The far-dated December 2012
+    # contract won that single session on 1,077 lots, cummax latched onto it, and 211 of
+    # the following 820 sessions were served by the wrong contract -- right through 2012,
+    # when March, May, July and September each genuinely had their turn. A local gap in one
+    # contract became global corruption of the whole series.
+    #
+    # Under this rule the same session costs a handful of sessions rather than the rest of
+    # the series: the spurious jump forward is taken, then the real front month wins
+    # `confirm_sessions` in a row and the series falls back to it. Contract months are
+    # zero-padded YYYYMM, so string ordering is expiry ordering.
+    seq = winner["winner"].tolist()
+    current = seq[0]                       # no prior session to learn from
+    streak_of, streak_n = None, 0
+    active_seq: list[str] = []
+    for w in seq:
+        active_seq.append(current)         # decided before this session is observed
+        streak_of, streak_n = (w, streak_n + 1) if w == streak_of else (w, 1)
+        if w > current:
+            current = w                    # forward: an ordinary crossover
+        elif w < current and streak_n >= confirm_sessions:
+            current = w                    # backward: only once it has proved itself
+    winner["active"] = active_seq
 
     # Dormant sessions inherit the nearest decision: forward from the last decided one,
     # and backward for any that precede the first.
@@ -177,7 +206,8 @@ def choose_active_contract(per_contract: dict[str, pd.DataFrame],
 def build_continuous(data_dir: str | Path, symbol: str,
                      bar_size: str = "1min", what: str = "TRADES",
                      stop_entries_days_before_expiry: int = 5,
-                     min_session_volume_fraction: float = 0.01) -> pd.DataFrame:
+                     min_session_volume_fraction: float = 0.01,
+                     confirm_sessions: int = 3) -> pd.DataFrame:
     """
     Build the continuous active-contract series for one symbol.
 
@@ -203,7 +233,8 @@ def build_continuous(data_dir: str | Path, symbol: str,
     per_contract = {cf.contract_month: load_contract(cf) for cf in files}
     expiry = {cf.contract_month: cf.expiry for cf in files}
 
-    active = choose_active_contract(per_contract, min_session_volume_fraction)
+    active = choose_active_contract(per_contract, min_session_volume_fraction,
+                                    confirm_sessions)
     if active.empty:
         raise ValueError(f"{symbol}: no volume anywhere, cannot determine active contract")
     active_by_date = dict(zip(active["session_date"], active["contract_month"]))

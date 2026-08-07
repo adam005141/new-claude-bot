@@ -1459,3 +1459,39 @@ def test_thin_sessions_are_flagged_not_dropped():
     sess = c.drop_duplicates("session_date")
     assert sess["thin_session"].sum() == 10, "the dormant head should be flagged"
     assert len(sess) == 30, "and still present: flagged, not dropped"
+
+
+def test_one_anomalous_session_cannot_corrupt_the_rest_of_the_series():
+    """
+    Regression: a single spike must cost a few sessions, not every session after it.
+
+    Real case, silver 2011. The December 2011 contract was missing from the download, so
+    on 2011-09-26 the only contracts with volume were dormant ones and the session total
+    squeaked over the voting floor. The far-dated December 2012 contract won that one
+    session on 1,077 lots. Under the previous `cummax` guard that latched permanently:
+    211 of the following 820 sessions ran on the wrong contract, right through 2012 while
+    March, May, July and September each genuinely had their turn.
+
+    The fix is asymmetric rather than monotonic. Falling back to an earlier expiry needs
+    `confirm_sessions` consecutive wins, so noise cannot flip it; but it CAN fall back,
+    so a spike costs a bounded excursion instead of the remainder of the series.
+    """
+    from engine.data import choose_active_contract
+
+    days = pd.bdate_range("2024-01-01", periods=30).strftime("%Y-%m-%d").tolist()
+    # 202403 is front throughout, except one session where the far-dated 202409 spikes.
+    v_front = [9000] * 30
+    v_far = [10] * 30
+    v_front[5], v_far[5] = 10, 9000
+
+    per = {
+        "202403": _dormant_then_front("202403", days, v_front),
+        "202409": _dormant_then_front("202409", days, v_far),
+    }
+    active = choose_active_contract(per, confirm_sessions=3).set_index("session_date")
+    seq = active["contract_month"].tolist()
+
+    wrong = sum(1 for c in seq if c != "202403")
+    assert wrong > 0, "the spike should be acted on at all, or the test proves nothing"
+    assert wrong <= 4, f"excursion must stay bounded, got {wrong} sessions on 202409"
+    assert seq[-1] == "202403", "must recover, not latch for the rest of the series"
