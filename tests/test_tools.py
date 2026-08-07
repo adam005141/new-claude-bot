@@ -1433,3 +1433,38 @@ def test_no_adverse_selection_is_reported_when_there_is_none():
     sel = ((m.loc[m["filled"], "ret_from_market"].mean() - m["ret_from_market"].mean())
            * MES.point_value)
     assert abs(sel) < 4.0, f"no penalty was built in, but selection reads {sel:.2f}"
+
+
+def test_account_presets_match_the_published_geometry():
+    from tools.feasibility import ACCOUNTS, account_rules
+    for name, (bal, buf, target) in ACCOUNTS.items():
+        r = account_rules(name)
+        assert r.starting_balance == bal
+        assert r.mll_buffer == buf
+        assert r.profit_target == target
+        # The trailing floor stops trailing at the STARTING balance on every size.
+        assert r.mll_locks_at == bal
+        assert r.target_balance == bal + target
+
+
+def test_bigger_accounts_have_a_worse_target_to_buffer_ratio():
+    """
+    The effect that cuts against size, and the reason this needed simulating rather than
+    asserting. Luck alone passes less often on the larger Combines.
+    """
+    from tools.feasibility import ACCOUNTS
+    ratios = {k: t / b for k, (_, b, t) in ACCOUNTS.items()}
+    assert ratios["50k"] == pytest.approx(1.5)
+    assert ratios["100k"] == pytest.approx(2.0)
+    assert ratios["150k"] == pytest.approx(2.0)
+
+
+def test_a_bigger_buffer_survives_a_drawdown_that_kills_a_smaller_one():
+    from tools.feasibility import account_rules, simulate
+    # Every session identical, so the bootstrap cannot reorder the path and the test is
+    # deterministic. Eight sessions of -$250 is exactly the $2,000 buffer.
+    r = np.array([-250.0] * 8)
+    small = simulate(r, account_rules("50k"), 8, 30, np.random.default_rng(0))
+    big = simulate(r, account_rules("150k"), 8, 30, np.random.default_rng(0))
+    assert small["breach"] == 1.0, "a $2,000 buffer must not survive a $2,000 drawdown"
+    assert big["breach"] == 0.0, "a $4,500 buffer must"

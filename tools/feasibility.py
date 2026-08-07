@@ -65,6 +65,29 @@ from tools.session_decomposition import (  # noqa: E402
 
 MEAN_BLOCK = 10          # sessions; long enough to carry a losing cluster intact
 
+# Topstep Combine sizes, as (starting balance, trailing buffer, profit target).
+#
+# Two effects fight each other across these, and only a simulation under the TRAILING
+# rule settles which wins:
+#
+#   in favour of bigger   the buffer scales linearly with the account while the drawdown
+#                         you must survive scales as the SQUARE ROOT of the time exposed,
+#                         so doubling both target and buffer doubles the room and only
+#                         root-two's the danger
+#   against bigger        target/buffer worsens from 1.5 on the $50k to 2.0 on both
+#                         others, so luck alone passes less often
+ACCOUNTS: dict[str, tuple[float, float, float]] = {
+    "50k":  (50_000.0, 2_000.0, 3_000.0),
+    "100k": (100_000.0, 3_000.0, 6_000.0),
+    "150k": (150_000.0, 4_500.0, 9_000.0),
+}
+
+
+def account_rules(name: str) -> PropRules:
+    bal, buf, target = ACCOUNTS[name]
+    return PropRules(starting_balance=bal, mll_buffer=buf, profit_target=target,
+                     mll_locks_at=bal)
+
 
 def stationary_bootstrap(x: np.ndarray, n_out: int, rng, mean_block: int = MEAN_BLOCK):
     """
@@ -192,6 +215,10 @@ def main(argv=None) -> int:
                     help="Horizon in sessions, roughly one year.")
     ap.add_argument("--trials", type=int, default=4000)
     ap.add_argument("--seed", type=int, default=7)
+    ap.add_argument("--accounts", nargs="+", default=sorted(ACCOUNTS),
+                    choices=sorted(ACCOUNTS),
+                    help="Combine sizes to compare. Buffer and target scale together, "
+                         "so this is not simply 'more of the same'.")
     ap.add_argument("--fee-upfront", type=float, default=50.0)
     ap.add_argument("--fee-monthly", type=float, default=50.0)
     ap.add_argument("--fee-activation", type=float, default=150.0)
@@ -380,6 +407,54 @@ def main(argv=None) -> int:
         print(f"  CHEAPEST: {cheapest['label']} at ${cheapest['cost']:,.0f} expected, "
               f"P(pass) {cheapest['pass']:.0%}")
 
+        # ---- account size ------------------------------------------------
+        #
+        # The one lever that changes the DENOMINATOR rather than the numerator. Every
+        # other lever tried to raise the per-session Sharpe and each was measured and
+        # closed; this one leaves the strategy untouched and changes what the account
+        # asks of it.
+        print()
+        print("  ACCOUNT SIZE")
+        print("  Buffer scales linearly with the account while the drawdown that must be")
+        print("  survived scales as the square root of time exposed, so bigger helps.")
+        print("  But target/buffer worsens from 1.5 on the 50k to 2.0 on the others, so")
+        print("  luck alone passes less often. The two fight; this settles it.")
+        print()
+        print(f"  {'account':<8}{'qty':>5}{'B/sd':>7}{'PASS':>7}{'luck':>7}{'LIFT':>7}"
+              f"{'BREACH':>8}{'mo pass':>9}{'E[fees]':>10}")
+        acct_rows = []
+        for acct in args.accounts:
+            ar = account_rules(acct)
+            for q in (1, 2, 3, 4, 6):
+                scaled = per_contract * q
+                res = simulate(scaled, ar, int(2500 * frac), args.trials, rng)
+                null = simulate(edge_free * q, ar, int(2500 * frac), args.trials, rng)
+                res["cost"] = expected_fees(res, args.fee_upfront, args.fee_monthly,
+                                            args.fee_activation)
+                sd_q = float(scaled.std(ddof=1))
+                row = {"account": acct, "qty": q, "buffer_over_sd": ar.mll_buffer / sd_q,
+                       "pass_no_edge": null["pass"],
+                       "edge_lift": res["pass"] - null["pass"], **res}
+                acct_rows.append(row)
+                print(f"  {acct:<8}{q:>5}{row['buffer_over_sd']:>7.1f}{res['pass']:>7.0%}"
+                      f"{null['pass']:>7.0%}{row['edge_lift']:>+7.0%}"
+                      f"{res['breach']:>8.0%}"
+                      f"{res['sessions_to_pass'] / SESSIONS_PER_MONTH:>9.1f}"
+                      f"{res['cost']:>10,.0f}")
+            print()
+        # Deliberately NOT merged into `rows`: those carry a `window` key that the
+        # summary line below reads, and account rows do not. Mixing them made
+        # `max(rows, ...)` pick an account row and raise KeyError('window').
+        summary_accounts = acct_rows
+        best_acct = max(acct_rows, key=lambda r: r["edge_lift"])
+        print(f"  BIGGEST EDGE LIFT: {best_acct['account']} at {best_acct['qty']} "
+              f"contract(s), P(pass) {best_acct['pass']:.0%} against "
+              f"{best_acct['pass_no_edge']:.0%} on luck alone.")
+        print()
+        print("  E[fees] above uses the 50k FEE SCHEDULE for every row. The larger")
+        print("  Combines cost more per month, and that figure has not been supplied, so")
+        print("  the cost column is comparable only within an account size.")
+
     best = max(rows, key=lambda r: r["pass"])
     print()
     print(f"  BEST P(pass): {best['pass']:.1%} at {best['window']}, gate "
@@ -402,7 +477,9 @@ def main(argv=None) -> int:
 
     if args.report:
         args.report.parent.mkdir(parents=True, exist_ok=True)
-        args.report.write_text(json.dumps(rows, indent=2, default=str))
+        args.report.write_text(json.dumps(
+            {"configs": rows, "accounts": locals().get("summary_accounts", [])},
+            indent=2, default=str))
         print(f"\nwritten to {args.report}")
     return 0
 

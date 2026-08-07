@@ -282,6 +282,36 @@ the annual Sharpe from 0.80 to 1.24; two ticks takes it to 1.40.
 **Prediction, registered before the run:** no single lever reaches the Sharpe needed for
 75% P(pass) inside six months, and the cost lever is the largest of the three.
 
+### Registered BEFORE execution: run 20 (account size)
+
+The one lever that changes the DENOMINATOR rather than the numerator. Every other lever
+tried to raise the per-session Sharpe, and each has now been measured and closed. This one
+leaves the strategy untouched and changes what the account asks of it.
+
+Sizes available: **$50k** (buffer $2,000, target $3,000), **$100k** ($3,000 / $6,000),
+**$150k** ($4,500 / $9,000).
+
+**Two effects fight, which is why this needed simulating rather than asserting.**
+
+In favour of bigger: the buffer scales **linearly** with the account, while the drawdown
+that must be survived scales as the **square root** of the time exposed. Doubling both
+target and buffer doubles the room and only root-two's the danger.
+
+| account | buffer | target | sessions to target at 1 contract | rough E[max drawdown] | **buffer / drawdown** |
+|---|---:|---:|---:|---:|---:|
+| $50k | 2,000 | 3,000 | 476 | 2,706 | **0.74** |
+| $100k | 3,000 | 6,000 | 952 | 3,827 | **0.78** |
+| $150k | 4,500 | 9,000 | 1,429 | 4,687 | **0.96** |
+
+Against bigger: **target/buffer worsens from 1.5 on the $50k to 2.0 on both others**, so
+luck alone passes less often. Gambler's-ruin on a fixed floor would be 40%, 33% and 33%.
+
+**Prediction: the $150k geometry produces the largest edge lift over its own luck-only
+baseline, but takes materially longer at any given contract count, so it wins on P(pass)
+and loses on fees.** The fee schedules for the larger Combines have not been supplied, so
+the cost column is comparable only within an account size and that has to be said on the
+page rather than assumed away.
+
 ### Edge budget result: the requirement is six times the edge (2026-08-06)
 
 Measured, one MES contract, overnight window, $150 cap, 619 sessions:
