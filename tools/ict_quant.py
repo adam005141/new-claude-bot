@@ -156,7 +156,7 @@ def score(rows, draws, rng):
     if t.empty:
         return {"signals": 0}
     t["skipped"] = t.get("skipped", False)
-    t["skipped"] = t["skipped"].fillna(False)
+    t["skipped"] = t["skipped"].fillna(False).astype(bool)
     taken = t[~t["skipped"]]
     if len(taken) < 20:
         return {"signals": len(t), "taken": len(taken)}
