@@ -131,3 +131,41 @@ structures already closed.
 **2017-2023 is not downloaded and must not be**, so that a passing arm has somewhere
 genuinely unseen to be confirmed. If an arm passes on 2008-2016, the confirmation set is
 specified now: same code, same parameters, 2017-2023, single run.
+
+---
+
+## Amendment 1, 2026-08-10: the window narrows to 2009-2016
+
+Recorded **before any result was computed**, and forced by data availability rather than
+chosen.
+
+Barchart's ES intraday archive begins **2008-05-04**. ESH08 returns a file containing a
+header and a provenance footer and nothing else; ESM08 starts 2008-05-04, already inside
+its own roll. The continuous series has 43 tradeable sessions in 2008 and a 24-day hole in
+October, then runs clean at 257-259 sessions a year from 2009.
+
+The tested window is therefore **2009-2016, eight full years, 2,053 sessions**, not the
+nine years registered. Nothing else changes.
+
+This costs the 2008 crash, which was the most distinctive regime in the registered span.
+That is a real loss and it is not recoverable: the data does not exist to buy. There is no
+point spending further quota on 2008 contracts.
+
+Power is barely affected. Eight years still gives ~2,050 sessions for BASE, ~390 for TOM,
+and ~64 for FOMC.
+
+## Amendment 2, 2026-08-10: the FOMC arm is blocked pending dates
+
+The FOMC arm needs the exact announcement dates for 2009-2016. This environment's egress
+proxy blocks federalreserve.gov, and web search returned 2009-2013 complete, 2014 partial,
+and almost nothing for 2015-2016.
+
+An incomplete schedule does not weaken the arm, it corrupts it: a missed meeting is a night
+labelled "no event" that was in fact the event, which contaminates both the treatment and
+the control. Guessing the remainder from memory is exactly the kind of fabricated input
+this project refuses.
+
+The arm is therefore **held, not dropped**, until a complete and sourced list is supplied.
+BASE, TOM and DOW are unaffected and may run first. If FOMC never runs, the Bonferroni
+correction across the conditioning arms drops from three to two (nominal p < 0.025), and
+that change is recorded here rather than applied silently.
