@@ -147,9 +147,15 @@ def score(t, sessions, draws, rng):
     sharpe = float(x.mean() / sd) if sd > 0 else 0.0
     ef = x - x.mean()
     obs = float(x.mean() / (sd / np.sqrt(len(x))))
-    p = float(np.mean([stationary_bootstrap(ef, len(x), rng).mean()
-                       / (stationary_bootstrap(ef, len(x), rng).std(ddof=1) / np.sqrt(len(x)))
-                       >= obs for _ in range(draws)])) if draws else 1.0
+    # numerator and denominator must come from the SAME resample. Drawing two independent
+    # ones decorrelates them and over-disperses the null t, which errs conservative -- every
+    # cell here failed, so no verdict moves -- but it is still the wrong statistic.
+    def _boot_t():
+        b = stationary_bootstrap(ef, len(x), rng)
+        s = b.std(ddof=1)
+        return b.mean() / (s / np.sqrt(len(b))) if s > 0 else 0.0
+
+    p = float(np.mean([_boot_t() >= obs for _ in range(draws)])) if draws else 1.0
     taken = t[t["state"] == "taken"]
     skipped = t[t["state"] == "skipped"]
     return {

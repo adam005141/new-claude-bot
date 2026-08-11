@@ -31,11 +31,22 @@ deleting the best 5% of trades.
 
 | arm | signals | taken | take% | pts | $/trade | net $ | total $ | WR | t | t-5% | p |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
-| FVG | 2,004 | 1,581 | 79% | 0.176 | +0.88 | -2.82 | +1,389 | 13% | 1.40 | **-13.75** | 0.161 |
-| SWEEP | 1,636 | 887 | 54% | -0.023 | -0.11 | -3.81 | -101 | 21% | -0.11 | -8.61 | 0.548 |
-| SILVER | 1,928 | 202 | 10% | -0.343 | -1.71 | -5.41 | -346 | 45% | -0.52 | -2.78 | 0.935 |
-| TREND4H | 1,928 | 63 | 3% | 1.940 | +9.70 | +6.00 | +611 | 65% | 2.38 | 1.74 | <0.001 |
-| VOLLOW | 1,928 | 701 | 36% | -0.397 | -1.98 | -5.68 | -1,391 | 40% | -1.57 | -6.29 | 0.974 |
+| FVG | 2,004 | 1,581 | 79% | 0.176 | +0.88 | -2.82 | +1,389 | 13% | 1.40 | **-13.75** | 0.045 |
+| SWEEP | 1,636 | 887 | 54% | -0.023 | -0.11 | -3.81 | -101 | 21% | -0.11 | -8.61 | 0.550 |
+| SILVER | 1,928 | 202 | 10% | -0.343 | -1.71 | -5.41 | -346 | 45% | -0.52 | -2.78 | 0.702 \* |
+| TREND4H | 1,928 | 63 | 3% | 1.940 | +9.70 | +6.00 | +611 | 65% | 2.38 | 1.74 | 0.000 \* |
+| VOLLOW | 1,928 | 701 | 36% | -0.397 | -1.98 | -5.68 | -1,391 | 40% | -1.57 | -6.29 | 0.926 |
+
+\* bootstrap p is anti-conservative below 700 trades and is not readable as a probability.
+
+**The p column was corrected on 2026-08-11 and this table now shows the corrected values.**
+The original code compared each bootstrap resample's t-statistic against the observed mean in
+dollars, which are different units. Fixed to the studentised form used elsewhere in the
+project, the run was repeated: every trade-level number is byte-identical and no verdict
+changed, because p was never the binding criterion for any arm. TREND4H's reported
+`p < 0.001` was doubly wrong -- wrong units, and taken from a 63-trade bootstrap whose null
+99th percentile is 1.62 against a nominal 2.326. See
+`RESULTS_TREND_CONFLUENCE_2026-08-11.md` for the calibration measurement.
 
 Decision rule was mean > $0 raw, rotation-null `p < 0.010` (Bonferroni across five), and
 `|t| > 2.0` after trimming the best 5%. No arm clears all three.

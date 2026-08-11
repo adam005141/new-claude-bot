@@ -41,6 +41,13 @@ FVG_WINDOW = 12
 SWEEP_WINDOW = 6
 TREND_BARS = 48                # 4 hours of 5-minute bars
 VOL_LOOKBACK = 60
+BOOT_MIN_N = 700               # below this the studentised block bootstrap is under-dispersed
+
+# Measured 2026-08-11 on demeaned iid input with mean_block=10, 4000 draws: the null t
+# distribution reaches nominal calibration only around n >= 700 (q99 2.23 at n=701, 2.30 at
+# n=1142, 2.32 at n=1581) and is badly under-dispersed below it (q99 1.62 at n=63, 1.67 at
+# n=202, 1.85 at n=446) against a nominal 2.326. Skew makes it worse: q99 1.32 at n=63. So a
+# bootstrap p from a small arm is anti-conservative and is flagged rather than reported bare.
 
 
 def _exit_at_end(w, start, d, entry, stop):
@@ -151,6 +158,12 @@ def l2n_break(s, filt=None, ctx=None):
     return None
 
 
+def _boot_t(ef, n, rng) -> float:
+    b = stationary_bootstrap(ef, n, rng)
+    s = b.std(ddof=1)
+    return float(b.mean() / (s / np.sqrt(len(b)))) if s > 0 else 0.0
+
+
 def score(rows, draws, rng):
     t = pd.DataFrame(rows)
     if t.empty:
@@ -169,15 +182,17 @@ def score(rows, draws, rng):
     trim = np.sort(usd)[:-k]
     t_trim = float(trim.mean() / (trim.std(ddof=1) / np.sqrt(len(trim))))
     ef = usd - usd.mean()
-    p = float(np.mean([stationary_bootstrap(ef, len(usd), rng).mean() /
-                       (usd.std(ddof=1) / np.sqrt(len(usd))) >= usd.mean()
+    # studentised: compare each resample's OWN t to the observed t. Comparing a t to a mean
+    # in dollars is only equivalent when the standard error happens to be 1.0.
+    p = float(np.mean([_boot_t(ef, len(usd), rng) >= tt
                        for _ in range(draws)])) if draws else 1.0
     return {"signals": len(t), "taken": len(taken),
             "take_rate": len(taken) / len(t),
             "pts": float(pts.mean()), "usd": float(usd.mean()),
             "usd_net": float(usd.mean() - COST_RT),
             "total": float(usd.sum()), "wr": float((usd > 0).mean()),
-            "t": tt, "t_trim": t_trim, "p": p}
+            "t": tt, "t_trim": t_trim, "p": p,
+            "p_reliable": bool(len(usd) >= BOOT_MIN_N)}
 
 
 def main(argv=None) -> int:
@@ -249,7 +264,8 @@ def main(argv=None) -> int:
         print(f"  {arm:<10}{sc['signals']:>8}{sc['taken']:>7}{sc['take_rate']:>7.0%}"
               f"{expect[arm]:>11}{sc['pts']:>8.3f}{sc['usd']:>9.2f}{sc['usd_net']:>8.2f}"
               f"{sc['total']:>10,.0f}{sc['wr']:>6.0%}{sc['t']:>7.2f}"
-              f"{sc['t_trim']:>7.2f}{sc['p']:>7.4f}")
+              f"{sc['t_trim']:>7.2f}{sc['p']:>7.4f}"
+              f"{'' if sc['p_reliable'] else ' *'}")
 
     alpha = 0.05 / 5
     print("\n" + "=" * 94)
@@ -266,6 +282,9 @@ def main(argv=None) -> int:
         y = lambda b: "yes" if b else "no"              # noqa: E731
         print(f"  {arm:<10}{y(cs[0]):>9}{y(cs[1]):>7}{y(cs[2]):>10}   "
               f"{'PASS' if ok else 'FAIL'}")
+
+    print("\n  * bootstrap p is anti-conservative below "
+          f"{BOOT_MIN_N} trades and should not be read as a probability.")
 
     if args.report:
         args.report.parent.mkdir(parents=True, exist_ok=True)

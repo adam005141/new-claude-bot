@@ -9,6 +9,7 @@ easiest way to make a search look more disciplined than it was.
 
 | # | Date | Split | Instrument | Leg | Config | Trades | Expectancy $ | Verdict |
 |---|---|---|---|---|---|---:|---:|---|
+| 31 | 2026-08-11 | **pre-registered, ES 2009-2016, 5-min** | ES as MES | 4h trend corrected + confluence: TREND4H-FIX / TREND4H-FVG / IFVG / SWEEP-FVG / SWEEP-IFVG | raw entry-to-exit, Bonferroni 0.010, concentration trim, 100-trade floor, no-stop diagnostic | 5,978 taken | best +1.63/trade | **ALL FIVE FAIL.** **The corrected 4-hour filter is COLLINEAR with the breakout it filters**: take rate 97%, because a 48-bar lookback from a break at median bar 2 reaches back to mso -240, inside the London window that defines the range -- the trend sign and the side you broke are the same measurement twice. Decontaminated it returns **-$0.04 on 1,812 trades against unfiltered L2N's +/-$0.01**. Same strategy. Third degenerate filter in four registrations, all three caught by the take-rate check, all three from overlapping windows of one price series. **The pre-registered decontamination was the whole result**: TREND4H-FIX is +$0.29 with the 63 already-seen sessions in and **-$0.04 with them out** -- 63 of 1,875 trades carried the entire positive mean, which is what looking before deciding costs, made visible. **iFVG is the third significantly NEGATIVE structure in the project**: -$3.04 at t -2.86 on 1,820 trades and -$4.83 at t -3.18 on 695, tested directionally. Plain FVG +$0.88 vs inverted -$0.32; the inversion is worse than the gap, not stronger. SWEEP-FVG is the best cell (+$1.63, t 1.35) and beats both parents, a real but tiny interaction that the sample loss (446 vs 1,581 trades) more than eats. **The no-stop diagnostic REVERSED my prediction**: 4 of 5 arms got worse without the stop, WR rose 13%->44-52% while P&L fell. The tight stop was load-bearing, capping losses on entries that keep going against you. The exits were not the problem; the entries are. |
 | 30 | 2026-08-10 | **pre-registered, ES 2009-2016, 5-min** | ES as MES | ICT + quant: FVG / SWEEP / SILVER / TREND4H / VOLLOW | raw entry-to-exit, no fees or slippage, Bonferroni 0.010, concentration trim | 3,434 taken | best +0.88/trade | **ALL FIVE FAIL, AND TWO ARE VOID AS TESTS.** The pre-registered take-rate check caught three misses before the P&L was read, which is exactly why it was added. **TREND4H is VOID, not failed**: the 48-bar lookback was indexed inside the NY window, and the L2N break fires at median bar 2 with 96.7% before bar 48, so the arm skipped 97% of signals and the surviving n=63 (+$9.70, p<0.001) is the late-breakout subpopulation, not a trend filter. It failed the concentration trim anyway (t-5% 1.74). **FVG is not a filter**: the imbalance fires in 99% of sessions. Its +$0.88 at t 1.40 is a lottery ticket -- WR 13%, and trimming the best 5% takes t to **-13.75**. **SWEEP, the arm I said I would least like to bet against, was the deadest in the set**: -$0.11 at t -0.11 on 887 trades, and 81% of sessions sweep a prior extreme, so there is no scarce liquidity pool. SILVER -$1.71 on 202 trades (sample size, as predicted). **VOLLOW is the clean negative**: matched take rate, causal, non-collinear, -$1.98 on 701 trades -- quiet-range breaks are worse than normal ones. Removing costs entirely did not change the answer. |
 | 1 | 2026-08-02 | dev | MES | B (ORB) | defaults, adverse | 72 | +3.60 | **FAILED** concentration, fragility, significance |
 | 2 | 2026-08-02 | dev | MNQ | B (ORB) | defaults, adverse | 11 | +31.44 | **NO EVIDENCE**, n too small |
@@ -909,6 +910,22 @@ finding; the comparison in R is.
 
 ## Notes
 
+- **Statistics correction, 2026-08-11.** `ict_quant.py` and `trend_confluence.py` compared
+  each bootstrap resample's **t-statistic** to the observed **mean in dollars** — different
+  units, equivalent only if the standard error is 1.0. Corrected to the studentised form
+  already used in the other eight tools and both runs repeated: **every trade-level number
+  is byte-identical and no verdict changed**, because p was never the binding criterion.
+  `entry_variants.py` separately drew two independent resamples for numerator and
+  denominator, which over-disperses the null and errs conservative; fixed and re-run, all
+  twelve cells still fail. Runs 30 and 31 carry corrected p-values.
+- **Bootstrap calibration floor: n = 700.** Measured on demeaned iid input with
+  `mean_block=10` over 4,000 draws, the studentised stationary bootstrap's null t reaches
+  its nominal 99th percentile of 2.326 only around n = 700 (2.23 at n=701, 2.32 at n=1,581)
+  and is badly under-dispersed below it (1.62 at n=63, 1.67 at n=202, 1.85 at n=446). Skew
+  makes it worse: 1.32 at n=63. **A bootstrap p below 700 trades is anti-conservative and is
+  now flagged rather than printed bare.** This is what produced run 30's TREND4H `p < 0.001`
+  at t = 2.38 on 63 trades. Every arm under 700 trades in runs 30 and 31 failed on a
+  criterion that does not use the bootstrap.
 - Runs 1-6 used engine 0.1.0 at commit `0670cb2`.
 - Rejection counters from runs before `0670cb2` are not comparable across reasons; filters
   were evaluated at different points in the chain. Trade results are unaffected.

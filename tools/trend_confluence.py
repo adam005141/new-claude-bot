@@ -43,6 +43,13 @@ FVG_WINDOW = 12                # bars allowed for the retracement into a zone
 SWEEP_WINDOW = 6               # bars allowed for the reclaim
 TREND_BARS = 48                # 4 hours of 5-minute bars
 MIN_TRADES = 100               # below this an arm is NOT SCORED, not failed
+BOOT_MIN_N = 700               # below this the studentised block bootstrap is under-dispersed
+
+# Measured 2026-08-11 on demeaned iid input with mean_block=10, 4000 draws: the null t
+# distribution reaches nominal calibration only around n >= 700 (q99 2.23 at n=701, 2.30 at
+# n=1142, 2.32 at n=1581) and is badly under-dispersed below it (q99 1.62 at n=63, 1.67 at
+# n=202, 1.85 at n=446) against a nominal 2.326. Skew makes it worse: q99 1.32 at n=63. So a
+# bootstrap p from a small arm is anti-conservative and is flagged rather than reported bare.
 
 ARMS = ("TREND4H-FIX", "TREND4H-FVG", "IFVG", "SWEEP-FVG", "SWEEP-IFVG")
 EXPECT = {"TREND4H-FIX": "45-60%", "TREND4H-FVG": "45-55%", "IFVG": "35-60%",
@@ -256,6 +263,12 @@ def sweep_then(s, prev_hi, prev_lo, kind: str, use_stop: bool):
 
 # --------------------------------------------------------------------------------- scoring
 
+def _boot_t(ef, n, rng) -> float:
+    b = stationary_bootstrap(ef, n, rng)
+    s = b.std(ddof=1)
+    return float(b.mean() / (s / np.sqrt(len(b)))) if s > 0 else 0.0
+
+
 def score(rows, draws, rng, subset=None):
     t = pd.DataFrame(rows)
     if t.empty:
@@ -276,12 +289,16 @@ def score(rows, draws, rng, subset=None):
     k = max(1, int(0.05 * len(usd)))
     trim = np.sort(usd)[:-k]
     ef = usd - usd.mean()
-    p = float(np.mean([stationary_bootstrap(ef, len(usd), rng).mean() / se >= usd.mean()
+    # studentised: compare each resample's OWN t to the observed t. Comparing a t to a mean
+    # in dollars is only equivalent when the standard error happens to be 1.0.
+    t_obs = usd.mean() / se
+    p = float(np.mean([_boot_t(ef, len(usd), rng) >= t_obs
                        for _ in range(draws)])) if draws else 1.0
     out.update({"pts": float(usd.mean() / POINT), "usd": float(usd.mean()),
                 "usd_net": float(usd.mean() - COST_RT), "total": float(usd.sum()),
                 "wr": float((usd > 0).mean()), "t": float(usd.mean() / se),
-                "t_trim": float(trim.mean() / (trim.std(ddof=1) / np.sqrt(len(trim)))),
+                "p_reliable": bool(len(usd) >= BOOT_MIN_N),
+            "t_trim": float(trim.mean() / (trim.std(ddof=1) / np.sqrt(len(trim)))),
                 "p": p})
     return out
 
@@ -310,7 +327,8 @@ def fmt(arm, sc, expect):
     return (f"  {arm:<13}{sc['signals']:>8}{sc['taken']:>7}{sc['take_rate']:>7.0%}"
             f"{expect:>10}{sc['pts']:>8.3f}{sc['usd']:>9.2f}{sc['usd_net']:>8.2f}"
             f"{sc['total']:>10,.0f}{sc['wr']:>6.0%}{sc['t']:>7.2f}"
-            f"{sc['t_trim']:>7.2f}{sc['p']:>7.4f}")
+            f"{sc['t_trim']:>7.2f}{sc['p']:>7.4f}"
+            f"{'' if sc['p_reliable'] else ' *'}")
 
 
 def main(argv=None) -> int:
@@ -397,6 +415,9 @@ def main(argv=None) -> int:
     if any(verdicts.values()):
         print("\n  A PASS IS NOT A RESULT. Cumulative trial count is forty-three.")
         print("  It is a hypothesis for the untouched 2017-2023 set.")
+
+    print(f"\n  * bootstrap p is anti-conservative below {BOOT_MIN_N} trades and should "
+          "not be read as a probability.")
 
     if args.report:
         args.report.parent.mkdir(parents=True, exist_ok=True)
