@@ -11,3 +11,7 @@ out/
 downloads/*.csv
 data_oos/
 data_history/
+
+# Consolidated data export: regenerate with tools/export_bundle.py
+export/futures_bars.parquet
+export/futures_bars.csv.gz
