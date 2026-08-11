@@ -1,0 +1,263 @@
+{
+  "cells": {
+    "ES/LONDON/q1": {
+      "n": 11331,
+      "usd": 0.22471538257876622,
+      "t": 2.5318398776187436,
+      "p": 0.006,
+      "wr": 0.4893654575942106,
+      "p_reliable": true,
+      "delay1_usd": 0.32566922873045323,
+      "keep": 1.4492520493842966,
+      "round_turn": 3.7,
+      "sign": -1
+    },
+    "ES/LONDON/q2": {
+      "n": 5821,
+      "usd": 0.40371070262841435,
+      "t": 2.1306696033627137,
+      "p": 0.009,
+      "wr": 0.497337227280536,
+      "p_reliable": true,
+      "delay1_usd": 0.1207901554404145,
+      "keep": 0.29919978502921396,
+      "round_turn": 3.7,
+      "sign": -1
+    },
+    "ES/LONDON/q4": {
+      "n": 1960,
+      "usd": 0.5746173469387755,
+      "t": 1.5139852937449048,
+      "p": 0.095,
+      "wr": 0.5112244897959184,
+      "p_reliable": true,
+      "delay1_usd": 1.059311224489796,
+      "keep": 1.8435072142064373,
+      "round_turn": 3.7,
+      "sign": -1
+    },
+    "SI/ASIA/q1": {
+      "n": 11530,
+      "usd": 1.5151777970511828,
+      "t": 2.572337023874935,
+      "p": 0.003,
+      "wr": 0.5006938421509106,
+      "p_reliable": true,
+      "delay1_usd": -0.18179295031917486,
+      "keep": -0.11998126600916253,
+      "round_turn": 31.2,
+      "sign": -1
+    },
+    "SI/ASIA/q2": {
+      "n": 5894,
+      "usd": 1.7390566677977568,
+      "t": 1.560482513751759,
+      "p": 0.079,
+      "wr": 0.498642687478792,
+      "p_reliable": true,
+      "delay1_usd": 2.6281760435571933,
+      "keep": 1.5112653269001102,
+      "round_turn": 31.2,
+      "sign": -1
+    },
+    "SI/ASIA/q4": {
+      "n": 2998,
+      "usd": 7.218145430286887,
+      "t": 3.0900964071928683,
+      "p": 0.001,
+      "wr": 0.5096731154102735,
+      "p_reliable": true,
+      "delay1_usd": 8.101182654402168,
+      "keep": 1.122335748516525,
+      "round_turn": 31.2,
+      "sign": -1
+    },
+    "SI/ASIA/q8": {
+      "n": 1513,
+      "usd": 6.500330469266334,
+      "t": 1.6296325231627904,
+      "p": 0.033,
+      "wr": 0.5102445472571051,
+      "p_reliable": true,
+      "delay1_usd": 6.426207809397716,
+      "keep": 0.9885970936063833,
+      "round_turn": 31.2,
+      "sign": -1
+    },
+    "SI/LONDON/q1": {
+      "n": 8911,
+      "usd": 0.9897879025922892,
+      "t": 1.063846278407798,
+      "p": 0.115,
+      "wr": 0.5057793738076535,
+      "p_reliable": true,
+      "delay1_usd": 1.5231286795626484,
+      "keep": 1.5388434992724411,
+      "round_turn": 31.2,
+      "sign": -1
+    },
+    "SI/LONDON/q2": {
+      "n": 4479,
+      "usd": 3.860236659968712,
+      "t": 1.9752182752544436,
+      "p": 0.021,
+      "wr": 0.5204286671131949,
+      "p_reliable": true,
+      "delay1_usd": 6.586985391766306,
+      "keep": 1.7063682804928584,
+      "round_turn": 31.2,
+      "sign": -1
+    },
+    "SI/LONDON/q4": {
+      "n": 1514,
+      "usd": 2.1796565389696356,
+      "t": 0.5453152975381541,
+      "p": 0.315,
+      "wr": 0.5250990752972259,
+      "p_reliable": true,
+      "delay1_usd": 4.352708058124241,
+      "keep": 1.9969696969697104,
+      "round_turn": 31.2,
+      "sign": -1
+    },
+    "GC/NY/q1": {
+      "n": 8914,
+      "usd": -0.13349786852141116,
+      "t": -0.5047541848137554,
+      "p": 0.705,
+      "wr": 0.45209782364819384,
+      "p_reliable": true,
+      "delay1_usd": 0.19307679381617543,
+      "keep": NaN,
+      "round_turn": 5.2,
+      "sign": 1
+    },
+    "GC/NY/q2": {
+      "n": 4472,
+      "usd": 0.33452593917710377,
+      "t": 0.6792288465659433,
+      "p": 0.249,
+      "wr": 0.46981216457960645,
+      "p_reliable": true,
+      "delay1_usd": 0.2929830395743459,
+      "keep": 0.8758156102783876,
+      "round_turn": 5.2,
+      "sign": 1
+    },
+    "GC/NY/q4": {
+      "n": 1503,
+      "usd": 1.009980039920108,
+      "t": 0.8191232475094495,
+      "p": 0.208,
+      "wr": 0.4624085163007319,
+      "p_reliable": true,
+      "delay1_usd": 0.7131367292224826,
+      "keep": 0.7060899235977907,
+      "round_turn": 5.2,
+      "sign": 1
+    },
+    "SI/NY/q1": {
+      "n": 8758,
+      "usd": 0.9996574560401752,
+      "t": 0.9589056722109089,
+      "p": 0.161,
+      "wr": 0.4416533455126741,
+      "p_reliable": true,
+      "delay1_usd": 0.7050298380221531,
+      "keep": 0.7052714244886488,
+      "round_turn": 31.2,
+      "sign": 1
+    },
+    "SI/NY/q2": {
+      "n": 4428,
+      "usd": 0.10049683830170557,
+      "t": 0.04805146283465683,
+      "p": 0.493,
+      "wr": 0.45934959349593496,
+      "p_reliable": true,
+      "delay1_usd": 0.06203890006713161,
+      "keep": 0.6173219089826701,
+      "round_turn": 31.2,
+      "sign": 1
+    },
+    "SI/NY/q4": {
+      "n": 1498,
+      "usd": -0.8144192256342202,
+      "t": -0.16063326434373595,
+      "p": 0.562,
+      "wr": 0.45193591455273696,
+      "p_reliable": true,
+      "delay1_usd": -3.1472763954271454,
+      "keep": NaN,
+      "round_turn": 31.2,
+      "sign": 1
+    }
+  },
+  "alpha": 0.0025,
+  "verdicts": {
+    "ES/LONDON/q1": {
+      "measurement": false,
+      "strategy": false
+    },
+    "ES/LONDON/q2": {
+      "measurement": false,
+      "strategy": false
+    },
+    "ES/LONDON/q4": {
+      "measurement": false,
+      "strategy": false
+    },
+    "SI/ASIA/q1": {
+      "measurement": false,
+      "strategy": false
+    },
+    "SI/ASIA/q2": {
+      "measurement": false,
+      "strategy": false
+    },
+    "SI/ASIA/q4": {
+      "measurement": true,
+      "strategy": false
+    },
+    "SI/ASIA/q8": {
+      "measurement": false,
+      "strategy": false
+    },
+    "SI/LONDON/q1": {
+      "measurement": false,
+      "strategy": false
+    },
+    "SI/LONDON/q2": {
+      "measurement": false,
+      "strategy": false
+    },
+    "SI/LONDON/q4": {
+      "measurement": false,
+      "strategy": false
+    },
+    "GC/NY/q1": {
+      "measurement": false,
+      "strategy": false
+    },
+    "GC/NY/q2": {
+      "measurement": false,
+      "strategy": false
+    },
+    "GC/NY/q4": {
+      "measurement": false,
+      "strategy": false
+    },
+    "SI/NY/q1": {
+      "measurement": false,
+      "strategy": false
+    },
+    "SI/NY/q2": {
+      "measurement": false,
+      "strategy": false
+    },
+    "SI/NY/q4": {
+      "measurement": false,
+      "strategy": false
+    }
+  }
+}
