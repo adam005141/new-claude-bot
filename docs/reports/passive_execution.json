@@ -1,0 +1,112 @@
+{
+  "cells": {
+    "TAKE/m0": {
+      "n": 3109,
+      "filled": 3109,
+      "fill_rate": 1.0,
+      "usd_per_signal": 7.291733676423331,
+      "usd_per_fill": 7.291733676423332,
+      "cf_unfilled": NaN,
+      "exit_passive_rate": NaN,
+      "t": 3.2033914745500343,
+      "p": 0.0,
+      "rt": 31.2,
+      "rt_high": 32.5,
+      "p_reliable": true
+    },
+    "PASSIVE-ENTRY/m0": {
+      "n": 3109,
+      "filled": 2609,
+      "fill_rate": 0.8391765841106466,
+      "usd_per_signal": 1.1112898037954668,
+      "usd_per_fill": 1.3242621694136094,
+      "cf_unfilled": 38.430000000000064,
+      "exit_passive_rate": NaN,
+      "t": 0.5150821573269375,
+      "p": 0.275,
+      "rt": 16.2,
+      "rt_high": 17.5,
+      "p_reliable": true
+    },
+    "PASSIVE-ENTRY/m1": {
+      "n": 3109,
+      "filled": 2277,
+      "fill_rate": 0.7323898359601158,
+      "usd_per_signal": 2.208105500160838,
+      "usd_per_fill": 3.014931927975426,
+      "cf_unfilled": 32.68028846153862,
+      "exit_passive_rate": NaN,
+      "t": 1.0469897976796396,
+      "p": 0.1375,
+      "rt": 16.2,
+      "rt_high": 17.5,
+      "p_reliable": true
+    },
+    "PASSIVE-ENTRY/m3": {
+      "n": 3109,
+      "filled": 1604,
+      "fill_rate": 0.515921518173046,
+      "usd_per_signal": 2.7179157285303894,
+      "usd_per_fill": 5.268079800499363,
+      "cf_unfilled": 25.4352159468439,
+      "exit_passive_rate": NaN,
+      "t": 1.39529437498083,
+      "p": 0.10875,
+      "rt": 16.2,
+      "rt_high": 17.5,
+      "p_reliable": true
+    },
+    "PASSIVE-BOTH/m0": {
+      "n": 3109,
+      "filled": 2609,
+      "fill_rate": 0.8391765841106466,
+      "usd_per_signal": -3.00739787713087,
+      "usd_per_fill": -3.5837485626676404,
+      "cf_unfilled": 38.430000000000064,
+      "exit_passive_rate": 0.8577999233422767,
+      "t": -1.3805248702091566,
+      "p": 0.92375,
+      "rt": 1.2,
+      "rt_high": 2.5,
+      "p_reliable": true
+    },
+    "PASSIVE-BOTH/m1": {
+      "n": 3109,
+      "filled": 2277,
+      "fill_rate": 0.7323898359601158,
+      "usd_per_signal": -0.30878095850751747,
+      "usd_per_fill": -0.4216073781290607,
+      "cf_unfilled": 32.68028846153862,
+      "exit_passive_rate": 0.7870004391743523,
+      "t": -0.14409724129998075,
+      "p": 0.515,
+      "rt": 1.2,
+      "rt_high": 2.5,
+      "p_reliable": true
+    },
+    "PASSIVE-BOTH/m3": {
+      "n": 3109,
+      "filled": 1604,
+      "fill_rate": 0.515921518173046,
+      "usd_per_signal": 1.7256352524932654,
+      "usd_per_fill": 3.3447630922702993,
+      "cf_unfilled": 25.4352159468439,
+      "exit_passive_rate": 0.6278054862842892,
+      "t": 0.8686629131859607,
+      "p": 0.19,
+      "rt": 1.2,
+      "rt_high": 2.5,
+      "p_reliable": true
+    }
+  },
+  "alpha": 0.0071428571428571435,
+  "verdicts": {
+    "TAKE/m0": false,
+    "PASSIVE-ENTRY/m0": false,
+    "PASSIVE-ENTRY/m1": false,
+    "PASSIVE-ENTRY/m3": false,
+    "PASSIVE-BOTH/m0": false,
+    "PASSIVE-BOTH/m1": false,
+    "PASSIVE-BOTH/m3": false
+  }
+}

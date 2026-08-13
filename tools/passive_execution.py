@@ -86,8 +86,10 @@ def simulate(blocks, arm: str, m: int) -> pd.DataFrame:
                 t += 2 * Q
                 continue
 
-            # passive entry: rest m ticks on the favourable side of the last trade
-            limit = take_entry + d * m * TICK       # sell higher / buy lower
+            # Passive ENTRY rests on the favourable side of the last trade: a short (d<0)
+            # offers ABOVE the market, a long bids BELOW it. Filled only if the next bar
+            # trades strictly through.
+            limit = take_entry - d * m * TICK
             nb = t + 1
             through = (hi[nb] > limit) if d < 0 else (lo[nb] < limit)
             if not through:
@@ -100,15 +102,19 @@ def simulate(blocks, arm: str, m: int) -> pd.DataFrame:
                 pts = d * (cl[exit_i] - limit)
                 rows.append({"state": "filled", "pts": pts, "cf": np.nan})
             else:
-                # passive exit: rest on the favourable side of the entry, market if unfilled
-                tgt = limit - d * m * TICK
-                filled_exit = False
-                for k in range(nb + 1, exit_i + 1):
-                    if (lo[k] < tgt) if d < 0 else (hi[k] > tgt):
-                        pts, filled_exit = d * (tgt - limit), True
-                        break
-                if not filled_exit:
-                    pts = d * (cl[exit_i] - limit)
+                # Passive EXIT rests on the favourable side of the exit bar's close: closing
+                # a short means BUYING, so it bids below; closing a long offers above. If the
+                # following bar does not trade through, exit at market on that bar's close.
+                ex_lim = cl[exit_i] + d * m * TICK
+                nxt = exit_i + 1
+                hit = (nxt < len(cl)
+                       and ((lo[nxt] < ex_lim) if d < 0 else (hi[nxt] > ex_lim)))
+                if hit:
+                    pts, filled_exit = d * (ex_lim - limit), True
+                elif nxt < len(cl):
+                    pts, filled_exit = d * (cl[nxt] - limit), False
+                else:
+                    pts, filled_exit = d * (cl[exit_i] - limit), False
                 rows.append({"state": "filled", "pts": pts, "cf": np.nan,
                              "exit_passive": filled_exit})
             t += 2 * Q
