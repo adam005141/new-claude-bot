@@ -82,7 +82,7 @@ def run_arm(c: pd.DataFrame, ref: tuple[int, int], trade: tuple[int, int],
                     entry = dn if b["open"] >= dn else b["open"]
                     stop = hi
                 pos = {"dir": 1 if took == "long" else -1, "entry": entry,
-                       "stop": stop, "i": i}
+                       "stop": stop, "i": i, "entry_utc": b["timestamp_utc"]}
                 continue
 
             px = reason = None
@@ -96,7 +96,15 @@ def run_arm(c: pd.DataFrame, ref: tuple[int, int], trade: tuple[int, int],
                 gross = (px - pos["entry"]) * pos["dir"] * POINT
                 rows.append({"session_date": sd, "dir": pos["dir"], "reason": reason,
                              "ref_range": hi - lo, "gross": gross,
-                             "net": gross - cost})
+                             "net": gross - cost,
+                             # additive only: recorded for the trade ledger, never read
+                             # by the P&L above, so these cannot change any result
+                             "contract": s["contract_month"].iloc[0],
+                             "ref_hi": hi, "ref_lo": lo, "stop_px": pos["stop"],
+                             "entry_utc": pos["entry_utc"],
+                             "exit_utc": b["timestamp_utc"],
+                             "entry_px": pos["entry"], "exit_px": px,
+                             "cost": cost})
                 pos = None
                 break
     return pd.DataFrame(rows)
