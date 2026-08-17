@@ -941,3 +941,33 @@ finding; the comparison in R is.
   348,741 MNQ quote-bars. The MES adverse prior matched measurement exactly, so the verdict
   is unchanged and the fragility gate is now properly evaluated rather than merely
   demonstrated.
+
+## Metals spread diagnostic, 2026-08-13 (property measurement, no trial spent)
+
+Run after the stopping rule was reached, at the user's direction. Lag profile of the log
+spread on 30-minute bars, 2009-2016, ~70,800 bars per pair, Bartlett 2se = 0.0075.
+
+| pair | leg corr | spread sd | lag1 | lag2 | lag3 | lag4 | lag5 | VR(2) | VR(4) | VR(8) |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| **GC/SI** | 0.752 | 20.17bp | -0.0297 | **-0.0155** | **-0.0164** | -0.0008 | **-0.0163** | 0.970/-2.5 | 0.931/-3.2 | 0.888/-3.5 |
+| GC/HG | 0.275 | 22.10bp | -0.0082 | -0.0045 | 0.0006 | 0.0003 | 0.0052 | 0.991/-1.2 | 0.982/-1.3 | 0.974/-1.3 |
+| SI/HG | 0.376 | 28.70bp | -0.0314 | -0.0047 | -0.0029 | -0.0021 | -0.0026 | 0.968/-4.0 | 0.946/-3.6 | 0.923/-3.4 |
+
+**GC/SI is the first spread in this project with structure beyond lag 1.** Lags 2, 3 and 5
+all sit outside the Bartlett band at roughly 2.1 to 2.2 standard errors, and the variance
+ratio deepens monotonically with horizon while its z grows (-2.5, -3.2, -3.5). Roll's bounce
+model predicts lag-1 and nothing else, so this is not the ES/NQ pattern.
+
+SI/HG is the ES/NQ pattern exactly: lag1 -0.0314 with lags 2-5 dead inside the band. Bounce.
+GC/HG has nothing anywhere, which fits a 0.275 leg correlation: there is no spread to speak of.
+
+Two structural reasons GC/SI differs from ES/NQ. Its legs correlate 0.752 rather than 0.908,
+so the spread keeps real variance (20.17bp) instead of being crushed to 7.11bp where the same
+absolute bounce dominates. And gold/silver has an actual cointegration story rather than
+being two equity indices tracking the same economy.
+
+**Not yet tested, and the cost arithmetic is hostile.** A rough ceiling: spread sigma over 8
+bars is about 57bp, VR(8) of 0.888 implies an excess-reversion coefficient near 0.056, giving
+roughly 2.55bp per trade, which on an MGC notional near $13,000 is about **$3.30**. The pair
+round turn is MGC $5.20 plus SIL $31.20 = **$36.40**. That is 9% of cost, and silver is the
+leg destroying it, exactly as in run 39.
