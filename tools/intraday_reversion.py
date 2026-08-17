@@ -85,20 +85,32 @@ def session_trades(s: pd.DataFrame, mode: str, cost: float) -> dict | None:
     return None
 
 
-def _walk(i, d, px, hi, lo, op, vwap, sd, cost):
-    """Enter at the close of bar i, exit on the anchor, the stop, or the session end."""
+def _walk(i, d, px, hi, lo, op, vwap, sd, cost, detail=False):
+    """Enter at the close of bar i, exit on the anchor, the stop, or the session end.
+
+    `detail` is additive only: it changes the RETURN SHAPE, never the arithmetic. Every
+    branch computes the same net it always did and simply reports the exit price, bar and
+    reason alongside. Default callers are byte-identical.
+    """
     entry = px[i]
+
+    def out(net, k, exit_px, reason):
+        return ({"net": net, "entry_px": float(entry), "exit_px": float(exit_px),
+                 "exit_bar": k, "reason": reason} if detail else net)
+
     for k in range(i + 1, len(px)):
         stop_px = vwap[k] + d * -1 * K_STOP * sd[k]     # 4 sigma further against us
         if d == 1 and lo[k] <= stop_px:
-            return (min(stop_px, op[k]) - entry) * POINT - cost
+            x = min(stop_px, op[k])
+            return out((x - entry) * POINT - cost, k, x, "stop")
         if d == -1 and hi[k] >= stop_px:
-            return (entry - max(stop_px, op[k])) * POINT - cost
+            x = max(stop_px, op[k])
+            return out((entry - x) * POINT - cost, k, x, "stop")
         # target: price back at the anchor
         if (d == 1 and hi[k] >= vwap[k]) or (d == -1 and lo[k] <= vwap[k]):
-            return (vwap[k] - entry) * d * POINT - cost
+            return out((vwap[k] - entry) * d * POINT - cost, k, vwap[k], "anchor")
         if k == len(px) - 1:
-            return (px[k] - entry) * d * POINT - cost
+            return out((px[k] - entry) * d * POINT - cost, k, px[k], "session_end")
     return None
 
 
