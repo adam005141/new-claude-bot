@@ -3,6 +3,10 @@ ib_async>=2.0
 pandas>=2.0
 pyarrow>=15.0
 PyYAML>=6.0
+# IANA timezone database. Linux and macOS ship one; Windows does not, so zoneinfo cannot
+# resolve America/New_York there without this. It was previously installed only because
+# ib_async happens to depend on it, which is an accident rather than a guarantee.
+tzdata>=2024.1
 
 # Tests
 pytest>=8.0

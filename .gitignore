@@ -16,3 +16,6 @@ data_history/
 export/futures_bars.parquet
 export/futures_bars.csv.gz
 export/MES_MNQ_5min_2024_2026.csv.gz
+
+# reproduce.py output
+results/
