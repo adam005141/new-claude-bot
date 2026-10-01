@@ -971,3 +971,34 @@ bars is about 57bp, VR(8) of 0.888 implies an excess-reversion coefficient near 
 roughly 2.55bp per trade, which on an MGC notional near $13,000 is about **$3.30**. The pair
 round turn is MGC $5.20 plus SIL $31.20 = **$36.40**. That is 9% of cost, and silver is the
 leg destroying it, exactly as in run 39.
+
+## Correction, 2026-10-01: silver and gold round turns were charged on a harsher rule than MES
+
+Found when asked why the silver round turn is so high. Two problems, one of them an error.
+
+**The error: inconsistent cost conventions.** MES is charged half the spread plus 0.5 tick of
+slippage per side (`cross_session.py`: `HALF_SPREAD_TICKS, BASE_SLIP_TICKS = 0.5, 0.5`). SIL and
+MGC were charged the FULL measured spread on EACH side (`passive_execution.py`:
+`2 * SPREAD_TICKS * TICK_USD`; hardcoded as 31.20 and 5.20 in `surviving_cells.py` and
+`gcsi_spread.py`). That double-charges the spread relative to how ES was treated.
+
+| | tick | spread | used | MES rule | half-spread only |
+|---|---:|---:|---:|---:|---:|
+| MES | $1.25 | 1 tick | $3.70 | $3.70 | $2.45 |
+| MGC | $1.00 | 2 ticks | $5.20 | **$4.20** | $3.20 |
+| SIL | $5.00 | 3 ticks | $31.20 | **$21.20** | $16.20 |
+
+**The weak evidence: the silver spread is three quotes.** Three top-of-book snapshots over four
+minutes on 2026-08-06, 22:08-22:12 ET, reading 3, 4 and 3 ticks. Contract id 738529133 is the
+FULL-SIZE 5,000 oz SIU6, not the 1,000 oz micro SIL the cost is charged on; the quote record
+itself says "micro vs 5,000 oz parent NOT established". It was taken with silver near $62 and
+applied to 2009-2016, when silver's median was about $21.
+
+**No verdict changes.** Under the consistent rule SI/ASIA/q4 is 2.9x short of cost on the full
+sample and 5.5x short excluding 2011 (was 4.3x and 8.1x); the GC/SI pair is 4.5x short (was
+about 6.4x). Even half-spread-only with no slippage leaves them 2.2x and 3.5x short. The only
+cost that clears SI/ASIA/q4's full-sample edge is a 1-tick silver spread with zero slippage
+($6.20 against $7.22), and nothing clears its ex-2011 edge of $3.87.
+
+The pre-registered tools are not edited after the fact; the published figures stand as what
+was run, and this note records what they should have used.
