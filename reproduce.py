@@ -3,7 +3,7 @@
 Rebuild the data from the committed raw CSVs and re-run the headline tests.
 
     python reproduce.py            headline tests, full bootstrap draws
-    python reproduce.py --quick    same tests, 50 draws (means and t unchanged, p coarser)
+    python reproduce.py --quick    same tests, 50 draws: means and t exact, p NOT reliable
     python reproduce.py --all      also the slow ones (volume conditioning, ICT, trend)
 
 Each test prints its full table and pre-registered verdict, and the same text is saved to
@@ -60,6 +60,15 @@ SLOW = [
     ("ict_quant", "ICT structures and quant filters", "all five fail"),
     ("trend_confluence", "4h trend and confluence", "all five fail"),
 ]
+
+
+QUICK_WARNING = """\
+QUICK MODE: 50 bootstrap draws. Means, t-statistics and the strategy verdicts are exact,
+but a p-value can only be resolved to 1/50 = 0.02, and the Bonferroni thresholds here run
+from 0.0025 to 0.025. Any 'p<a' marked yes, and any MEASUREMENT verdict that depends on
+it, is unconfirmed in this mode. Known case: surviving_cells ES/LONDON/q1 shows PASS here
+but its true p is 0.0060 against a 0.0025 threshold, so it FAILS. Run without --quick to
+get the published verdicts exactly."""
 
 
 def child_env() -> dict:
@@ -133,6 +142,8 @@ def main(argv=None) -> int:
         pass
 
     rebuild(args.rebuild)
+    if args.quick:
+        print(QUICK_WARNING + "\n")
     out_dir = ROOT / "results"
     out_dir.mkdir(exist_ok=True)
 
@@ -163,6 +174,8 @@ def main(argv=None) -> int:
     print("RUN SUMMARY")
     for tool, status, secs in summary:
         print(f"  {tool:<22}{status:<14}{secs:>7.0f}s")
+    if args.quick:
+        print("\n" + QUICK_WARNING)
     print("\nNone of these is a tradeable strategy. See docs/EXPERIMENT_LEDGER.md for why.")
     return 0 if all(s == "ok" for _, s, _ in summary) else 1
 
