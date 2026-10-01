@@ -31,6 +31,12 @@ IMPORTS = [
     ("data_raw/barchart_5min", "data_5min", "5min"),     # ES 5-minute
 ]
 
+# What a correct build produces. Checked by count, not by folder existence: a copy built
+# before the NQ import, or by an older importer, has the ES folder and is still wrong.
+EXPECTED = {("data_history", "ES"): 35, ("data_history", "GC"): 30,
+            ("data_history", "SI"): 30, ("data_history", "HG"): 30,
+            ("data_history", "NQ"): 33, ("data_5min", "ES"): 32}
+
 # (tool, what it tests, published headline to compare against)
 HEADLINE = [
     ("cross_session", "session breakouts A2L/L2N/NYOR",
@@ -62,14 +68,41 @@ def child_env() -> dict:
     # cp1252 and would raise UnicodeEncodeError without UTF-8 mode.
     env["PYTHONUTF8"] = "1"
     env["PYTHONIOENCODING"] = "utf-8"
+    # A child writing to a pipe block-buffers by default, so its output would still arrive
+    # in one lump at the end. Unbuffered makes the streaming real.
+    env["PYTHONUNBUFFERED"] = "1"
     return env
 
 
+def check_data() -> list[str]:
+    """Every way the existing build differs from a correct one. Empty means it is good."""
+    problems = []
+    for (top, sym), want in EXPECTED.items():
+        d = ROOT / top / sym
+        got = len(list(d.glob("*.parquet"))) if d.is_dir() else 0
+        if got != want:
+            problems.append(f"{top}/{sym}: {got} contract files, expected {want}")
+    return problems
+
+
 def rebuild(force: bool) -> None:
-    have = (ROOT / "data_history" / "ES").is_dir() and (ROOT / "data_5min" / "ES").is_dir()
-    if have and not force:
-        print("data already built (pass --rebuild to redo it)\n")
+    problems = check_data()
+    if not problems and not force:
+        print("data already built and verified: every instrument has its expected "
+              "contract count\n")
         return
+    if problems:
+        print("EXISTING DATA IS INCOMPLETE OR STALE, rebuilding:")
+        for pr in problems:
+            print(f"  {pr}")
+    # Move any old build aside rather than deleting it, so nothing local is lost and no
+    # stale file can be picked up alongside the fresh ones.
+    stamp = time.strftime("%Y%m%d-%H%M%S")
+    for top in ("data_history", "data_5min"):
+        d = ROOT / top
+        if d.is_dir():
+            d.rename(ROOT / f"{top}.old-{stamp}")
+            print(f"  moved old {top}/ to {top}.old-{stamp}/ (safe to delete)")
     print("REBUILDING DATA FROM data_raw/  (under a minute)")
     for src, out, bar in IMPORTS:
         cmd = [sys.executable, "tools/import_barchart.py", "--src", src, "--out", out,
@@ -80,7 +113,10 @@ def rebuild(force: bool) -> None:
         print(f"  {src:<24} -> {out:<13} {' | '.join(tail) or r.stderr.strip()[-200:]}")
         if r.returncode != 0:
             sys.exit(f"import failed for {src}; see the message above")
-    print()
+    left = check_data()
+    if left:
+        sys.exit("rebuild finished but the data is still wrong:\n  " + "\n  ".join(left))
+    print("  verified: every instrument has its expected contract count\n")
 
 
 def main(argv=None) -> int:
@@ -109,14 +145,19 @@ def main(argv=None) -> int:
         print(f"published: {published}")
         print("=" * 100, flush=True)
         t0 = time.time()
-        r = subprocess.run(cmd, cwd=ROOT, env=child_env(), capture_output=True, text=True,
-                           encoding="utf-8")
+        # Streamed line by line, so a long test shows progress instead of looking frozen.
+        lines = []
+        with subprocess.Popen(cmd, cwd=ROOT, env=child_env(), stdout=subprocess.PIPE,
+                              stderr=subprocess.STDOUT, text=True, encoding="utf-8",
+                              bufsize=1) as proc:
+            for line in proc.stdout:
+                print(line, end="", flush=True)
+                lines.append(line)
+        rc = proc.returncode
         secs = time.time() - t0
-        text = r.stdout + ("\n" + r.stderr if r.returncode else "")
-        (out_dir / f"{tool}.txt").write_text(text, encoding="utf-8")
-        print(text.rstrip() if r.returncode == 0 else text[-2000:])
+        (out_dir / f"{tool}.txt").write_text("".join(lines), encoding="utf-8")
         print(f"\n[{secs:.0f}s, full output in results/{tool}.txt]\n", flush=True)
-        summary.append((tool, "ok" if r.returncode == 0 else f"FAILED ({r.returncode})", secs))
+        summary.append((tool, "ok" if rc == 0 else f"FAILED ({rc})", secs))
 
     print("=" * 100)
     print("RUN SUMMARY")
